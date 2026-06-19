@@ -104,7 +104,7 @@ export async function getProductById(id: string) {
 export async function createProduct(
   productData: ProductInput,
   dimensionsData: DimensionsInput
-) {
+): Promise<{ success: boolean; error?: string; product?: unknown }> {
   const supabase = await createClient()
   const slug = slugify(productData.name, { lower: true, strict: true })
 
@@ -130,7 +130,10 @@ export async function createProduct(
 
   if (productError) {
     console.error("Error inserting product:", productError)
-    throw new Error(productError.message)
+    if (productError.code === "23505" || productError.message?.includes("products_sku_key")) {
+      return { success: false, error: "duplicate_sku" }
+    }
+    return { success: false, error: productError.message }
   }
 
   const createdProduct = product[0]
@@ -150,13 +153,12 @@ export async function createProduct(
 
   if (dimsError) {
     console.error("Error inserting product dimensions:", dimsError)
-    // Nota: Aunque el producto se creó, si las dimensiones fallan mostramos el error
-    throw new Error(`Producto creado, pero falló el registro logístico: ${dimsError.message}`)
+    return { success: false, error: `Producto creado, pero falló el registro logístico: ${dimsError.message}` }
   }
 
   revalidatePath("/products")
   revalidatePath("/") // Revalidar dashboard
-  return createdProduct
+  return { success: true, product: createdProduct }
 }
 
 // Actualizar un producto existente y sus dimensiones
@@ -164,7 +166,7 @@ export async function updateProduct(
   id: string,
   productData: ProductInput,
   dimensionsData: DimensionsInput
-) {
+): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient()
   const slug = slugify(productData.name, { lower: true, strict: true })
 
@@ -187,7 +189,10 @@ export async function updateProduct(
 
   if (productError) {
     console.error("Error updating product:", productError)
-    throw new Error(productError.message)
+    if (productError.code === "23505" || productError.message?.includes("products_sku_key")) {
+      return { success: false, error: "duplicate_sku" }
+    }
+    return { success: false, error: productError.message }
   }
 
   // 2. Actualizar o insertar en 'product_dimensions'
@@ -212,7 +217,7 @@ export async function updateProduct(
 
     if (dimsError) {
       console.error("Error updating dimensions:", dimsError)
-      throw new Error(dimsError.message)
+      return { success: false, error: dimsError.message }
     }
   } else {
     // Si por alguna razón no existía, se inserta
@@ -230,7 +235,7 @@ export async function updateProduct(
 
     if (dimsError) {
       console.error("Error inserting dimensions during update:", dimsError)
-      throw new Error(dimsError.message)
+      return { success: false, error: dimsError.message }
     }
   }
 
@@ -257,4 +262,365 @@ export async function toggleProductStatus(id: string, currentStatus: boolean) {
   revalidatePath("/products")
   revalidatePath("/") // Revalidar dashboard
   return data[0]
+}
+
+// === FASE 2A: GESTIÓN DE IMÁGENES ===
+
+export interface ProductImage {
+  id: string
+  product_id: string
+  image_url: string
+  sort_order: number
+  created_at: string
+  storage_path?: string
+}
+
+// Obtener todas las imágenes de un producto ordenadas por sort_order ASC
+export async function getProductImages(
+  productId: string
+): Promise<{ success: boolean; images?: ProductImage[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("product_id", productId)
+    .order("sort_order", { ascending: true })
+
+  if (error) {
+    console.error("Error fetching product images:", error)
+    return { success: false, error: error.message }
+  }
+
+  // Preparamos la arquitectura para almacenar y retornar también el storage_path
+  const rawImages = (data || []) as { id: string; product_id: string; image_url: string; sort_order: number; created_at: string }[]
+  const images = rawImages.map((img) => {
+    let storage_path = ""
+    try {
+      const parts = img.image_url.split("/public/products/")
+      if (parts.length > 1) {
+        storage_path = parts[1]
+      }
+    } catch (e) {
+      console.error("Error parsing storage_path from image_url:", e)
+    }
+    return {
+      ...img,
+      storage_path
+    } as ProductImage
+  })
+
+  return { success: true, images }
+}
+
+// Subir múltiples imágenes a Supabase Storage y registrarlas en product_images
+export async function uploadProductImages(
+  productId: string,
+  formData: FormData
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Verificar existencia del bucket "products" (sin intentar crearlo, mostrando error amigable si no existe)
+  const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
+  if (bucketsError) {
+    console.error("Error listing buckets:", bucketsError)
+    return { success: false, error: "Error de red o permisos al verificar el almacenamiento de imágenes." }
+  }
+
+  const productsBucketExists = buckets.some((b) => b.name === "products")
+  if (!productsBucketExists) {
+    return {
+      success: false,
+      error: "El almacenamiento de imágenes ('products') no está configurado en Supabase. Por favor, créalo en la consola de Supabase antes de continuar."
+    }
+  }
+
+  const files = formData.getAll("files") as File[]
+  if (!files || files.length === 0) {
+    return { success: false, error: "No se seleccionaron archivos para subir." }
+  }
+
+  // 2. Validar formatos y tamaño de archivos (máximo 10 MB por archivo)
+  const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"]
+  for (const file of files) {
+    if (file.size > 10 * 1024 * 1024) {
+      return { success: false, error: `El archivo ${file.name} excede el límite de tamaño permitido de 10 MB.` }
+    }
+    if (!allowedTypes.includes(file.type.toLowerCase()) && !file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
+      return { success: false, error: `Formato de archivo no soportado para ${file.name}. Usa JPG, PNG o WEBP.` }
+    }
+  }
+
+  // 3. Obtener el sort_order inicial para la secuencia
+  const { data: currentImages } = await supabase
+    .from("product_images")
+    .select("sort_order")
+    .eq("product_id", productId)
+    .order("sort_order", { ascending: false })
+
+  let nextSortOrder = 0
+  if (currentImages && currentImages.length > 0) {
+    nextSortOrder = currentImages[0].sort_order + 1
+  }
+
+  // 4. Subir y registrar secuencialmente
+  for (const file of files) {
+    try {
+      const buffer = Buffer.from(await file.arrayBuffer())
+      const timestamp = Date.now()
+      const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_")
+      const storagePath = `${productId}/${timestamp}-${cleanName}`
+
+      // Subir archivo al bucket "products"
+      const { error: uploadError } = await supabase.storage
+        .from("products")
+        .upload(storagePath, buffer, {
+          contentType: file.type || "image/jpeg",
+          upsert: true
+        })
+
+      if (uploadError) {
+        console.error("Error uploading to storage:", uploadError)
+        return { success: false, error: `Fallo al subir el archivo ${file.name} a Supabase Storage.` }
+      }
+
+      // Obtener URL pública
+      const { data: { publicUrl } } = supabase.storage
+        .from("products")
+        .getPublicUrl(storagePath)
+
+      // Registrar en la base de datos
+      const { error: dbError } = await supabase
+        .from("product_images")
+        .insert([
+          {
+            product_id: productId,
+            image_url: publicUrl,
+            sort_order: nextSortOrder
+          }
+        ])
+
+      if (dbError) {
+        console.error("Error saving image to DB:", dbError)
+        // Limpiar el archivo en storage en caso de fallo en BD
+        await supabase.storage.from("products").remove([storagePath])
+        return { success: false, error: `Error al registrar la imagen ${file.name} en la base de datos.` }
+      }
+
+      nextSortOrder++
+    } catch (e) {
+      console.error("Exception during file upload:", e)
+      return { success: false, error: `Ocurrió un error inesperado al procesar ${file.name}.` }
+    }
+  }
+
+  revalidatePath(`/products/${productId}`)
+  return { success: true }
+}
+
+// Eliminar imagen física del Storage y registro en la base de datos
+export async function deleteProductImage(
+  imageId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Obtener los datos del registro de la imagen
+  const { data: image, error: fetchError } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("id", imageId)
+    .single()
+
+  if (fetchError || !image) {
+    console.error("Error fetching image for deletion:", fetchError)
+    return { success: false, error: "No se encontró el registro de la imagen a eliminar." }
+  }
+
+  const productId = image.product_id
+  const imageUrl = image.image_url
+
+  // 2. Extraer el storage_path de la URL
+  let storagePath = ""
+  try {
+    const parts = imageUrl.split("/public/products/")
+    if (parts.length > 1) {
+      storagePath = parts[1]
+    }
+  } catch (e) {
+    console.error("Error parsing storage path:", e)
+  }
+
+  if (storagePath) {
+    // 3. Eliminar archivo físico de Supabase Storage
+    const { error: removeError } = await supabase.storage
+      .from("products")
+      .remove([storagePath])
+
+    if (removeError) {
+      console.error("Error removing physical file:", removeError)
+      // Continuamos de todas formas
+    }
+  }
+
+  // 4. Eliminar el registro en la base de datos
+  const { error: deleteError } = await supabase
+    .from("product_images")
+    .delete()
+    .eq("id", imageId)
+
+  if (deleteError) {
+    console.error("Error deleting image from DB:", deleteError)
+    return { success: false, error: "Error al eliminar el registro de la imagen." }
+  }
+
+  // 5. Re-indexar las imágenes restantes consecutivamente desde 0
+  const { data: remaining, error: reindexFetchError } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("product_id", productId)
+    .order("sort_order", { ascending: true })
+
+  if (!reindexFetchError && remaining && remaining.length > 0) {
+    for (let i = 0; i < remaining.length; i++) {
+      if (remaining[i].sort_order !== i) {
+        await supabase
+          .from("product_images")
+          .update({ sort_order: i })
+          .eq("id", remaining[i].id)
+      }
+    }
+  }
+
+  revalidatePath(`/products/${productId}`)
+  return { success: true }
+}
+
+// Reordenar imágenes (mover hacia arriba o abajo intercambiando sort_order)
+export async function reorderProductImages(
+  imageId: string,
+  direction: "up" | "down"
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Obtener la imagen seleccionada
+  const { data: image, error: fetchError } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("id", imageId)
+    .single()
+
+  if (fetchError || !image) {
+    console.error("Error fetching image for reordering:", fetchError)
+    return { success: false, error: "No se encontró el registro de la imagen." }
+  }
+
+  const productId = image.product_id
+  const currentOrder = image.sort_order
+
+  // 2. Buscar la imagen con la que intercambiar el orden
+  let query = supabase
+    .from("product_images")
+    .select("*")
+    .eq("product_id", productId)
+
+  if (direction === "up") {
+    query = query.lt("sort_order", currentOrder).order("sort_order", { ascending: false })
+  } else {
+    query = query.gt("sort_order", currentOrder).order("sort_order", { ascending: true })
+  }
+
+  const { data: candidates, error: swapFetchError } = await query.limit(1)
+
+  if (swapFetchError || !candidates || candidates.length === 0) {
+    // Si no hay candidatos, ya está en el límite
+    return { success: true }
+  }
+
+  const swapImage = candidates[0]
+  const targetOrder = swapImage.sort_order
+
+  // 3. Actualizar la de intercambio a la posición actual
+  const { error: updateSwapError } = await supabase
+    .from("product_images")
+    .update({ sort_order: currentOrder })
+    .eq("id", swapImage.id)
+
+  if (updateSwapError) {
+    console.error("Error updating swap image order:", updateSwapError)
+    return { success: false, error: "Error al actualizar el orden de las imágenes." }
+  }
+
+  // 4. Actualizar la actual a la posición de intercambio
+  const { error: updateCurrentError } = await supabase
+    .from("product_images")
+    .update({ sort_order: targetOrder })
+    .eq("id", image.id)
+
+  if (updateCurrentError) {
+    console.error("Error updating current image order:", updateCurrentError)
+    return { success: false, error: "Error al actualizar el orden de la imagen seleccionada." }
+  }
+
+  revalidatePath(`/products/${productId}`)
+  return { success: true }
+}
+
+// Establecer una imagen como principal (sort_order = 0 y desplazar el resto)
+export async function setAsMainProductImage(
+  imageId: string
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Obtener la imagen elegida
+  const { data: mainImage, error: fetchError } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("id", imageId)
+    .single()
+
+  if (fetchError || !mainImage) {
+    console.error("Error fetching image to set as main:", fetchError)
+    return { success: false, error: "No se encontró el registro de la imagen." }
+  }
+
+  const productId = mainImage.product_id
+
+  // 2. Obtener todas las imágenes de este producto
+  const { data: allImages, error: fetchAllError } = await supabase
+    .from("product_images")
+    .select("*")
+    .eq("product_id", productId)
+    .order("sort_order", { ascending: true })
+
+  if (fetchAllError || !allImages || allImages.length === 0) {
+    return { success: false, error: "Error al recuperar las imágenes del producto." }
+  }
+
+  // Filtrar la seleccionada y ordenarlas
+  const remainingImages = allImages.filter((img) => img.id !== imageId)
+
+  // 3. Asignar sort_order = 0 a la seleccionada
+  const { error: mainUpdateError } = await supabase
+    .from("product_images")
+    .update({ sort_order: 0 })
+    .eq("id", imageId)
+
+  if (mainUpdateError) {
+    console.error("Error setting main image:", mainUpdateError)
+    return { success: false, error: "Error al establecer la imagen como principal." }
+  }
+
+  // 4. Asignar sort_orders incrementales consecutivos (1, 2, ... N-1) a las restantes
+  for (let i = 0; i < remainingImages.length; i++) {
+    const { error: updateError } = await supabase
+      .from("product_images")
+      .update({ sort_order: i + 1 })
+      .eq("id", remainingImages[i].id)
+
+    if (updateError) {
+      console.error("Error updating sort order for remaining image:", updateError)
+    }
+  }
+
+  revalidatePath(`/products/${productId}`)
+  return { success: true }
 }

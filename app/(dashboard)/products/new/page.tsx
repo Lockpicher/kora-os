@@ -7,6 +7,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
 import { getBrands } from "../../brands/actions"
 import { getCategories } from "../../categories/actions"
 import { createProduct } from "../actions"
@@ -18,6 +19,7 @@ export default function NewProductPage() {
   const [isLoadingSelects, setIsLoadingSelects] = React.useState(true)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [errorMsg, setErrorMsg] = React.useState("")
+  const [skuError, setSkuError] = React.useState(false)
 
   // Form states
   const [sku, setSku] = React.useState("")
@@ -65,6 +67,7 @@ export default function NewProductPage() {
 
     setIsSubmitting(true)
     setErrorMsg("")
+    setSkuError(false)
 
     try {
       const productInput = {
@@ -86,8 +89,17 @@ export default function NewProductPage() {
         height: Number(height) || 0,
       }
 
-      await createProduct(productInput, dimensionsInput)
-      router.push("/products")
+      const res = await createProduct(productInput, dimensionsInput)
+      if (!res.success) {
+        if (res.error === "duplicate_sku") {
+          setErrorMsg("Ya existe un producto con el SKU ingresado. Utiliza un SKU diferente.")
+          setSkuError(true)
+        } else {
+          setErrorMsg(res.error || "Error al crear el producto.")
+        }
+      } else {
+        router.push("/products")
+      }
     } catch (e) {
       const err = e as Error
       setErrorMsg(err.message || "Error al crear el producto. Verifica que el SKU sea único.")
@@ -128,8 +140,14 @@ export default function NewProductPage() {
                     id="sku"
                     placeholder="Ej: MER-PUL-TUR-8"
                     value={sku}
-                    onChange={(e) => setSku(e.target.value)}
-                    className="bg-card border-border uppercase font-mono"
+                    onChange={(e) => {
+                      setSku(e.target.value)
+                      if (skuError) setSkuError(false)
+                    }}
+                    className={cn(
+                      "bg-card border-border uppercase font-mono",
+                      skuError && "border-destructive ring-2 ring-destructive/20 focus-visible:ring-destructive focus-visible:border-destructive"
+                    )}
                   />
                 </div>
                 <div className="flex flex-col gap-2">
