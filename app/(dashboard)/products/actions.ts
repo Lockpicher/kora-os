@@ -318,34 +318,6 @@ export async function uploadProductImages(
   formData: FormData
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient()
-  console.log("URL:", process.env.NEXT_PUBLIC_SUPABASE_URL)
-
-  console.log("KEY TYPE:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "ANON_KEY" : "PUBLISHABLE_KEY")
-
-  const keyToUse = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || ""
-  console.log("KEY PREFIX:", keyToUse.substring(0, 20))
-
-  const bucketsRaw = await supabase.storage.listBuckets()
-  console.log("LIST_BUCKETS RAW:", bucketsRaw)
-
-  const bucket = await supabase.storage.getBucket("products")
-  console.log("GET_BUCKET:", JSON.stringify(bucket, null, 2))
-
-  // 1. Verificar existencia del bucket "products" (sin intentar crearlo, mostrando error amigable si no existe)
-  const { error: bucketError } = await supabase.storage.getBucket("products")
-  if (bucketError) {
-    const err = bucketError as { status?: number; statusCode?: string; message?: string }
-    // Si el error indica explícitamente que no se encontró el bucket (404), retornamos un error amigable.
-    if (err.status === 404 || err.statusCode === "404" || err.message?.toLowerCase().includes("not found")) {
-      return {
-        success: false,
-        error: "El almacenamiento de imágenes ('products') no está configurado en Supabase. Por favor, créalo en la consola de Supabase antes de continuar."
-      }
-    }
-    // Si es otro tipo de error (ej: 403 Forbidden por permisos restrictivos de la anon key),
-    // registramos una advertencia en la consola e intentamos continuar con la subida.
-    console.warn("Advertencia al validar la existencia del bucket 'products':", bucketError.message)
-  }
 
   const files = formData.getAll("files") as File[]
   if (!files || files.length === 0) {
