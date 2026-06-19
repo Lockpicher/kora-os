@@ -379,6 +379,9 @@ export default function EditProductPage() {
           </div>
         </div>
       </form>
+
+      {/* Gestión de Imágenes del Producto (Fase 2A) */}
+      <ProductImages productId={productId} />
     </div>
   )
 }
