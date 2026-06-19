@@ -320,18 +320,19 @@ export async function uploadProductImages(
   const supabase = await createClient()
 
   // 1. Verificar existencia del bucket "products" (sin intentar crearlo, mostrando error amigable si no existe)
-  const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets()
-  if (bucketsError) {
-    console.error("Error listing buckets:", bucketsError)
-    return { success: false, error: "Error de red o permisos al verificar el almacenamiento de imágenes." }
-  }
-
-  const productsBucketExists = buckets.some((b) => b.name === "products")
-  if (!productsBucketExists) {
-    return {
-      success: false,
-      error: "El almacenamiento de imágenes ('products') no está configurado en Supabase. Por favor, créalo en la consola de Supabase antes de continuar."
+  const { error: bucketError } = await supabase.storage.getBucket("products")
+  if (bucketError) {
+    const err = bucketError as { status?: number; statusCode?: string; message?: string }
+    // Si el error indica explícitamente que no se encontró el bucket (404), retornamos un error amigable.
+    if (err.status === 404 || err.statusCode === "404" || err.message?.toLowerCase().includes("not found")) {
+      return {
+        success: false,
+        error: "El almacenamiento de imágenes ('products') no está configurado en Supabase. Por favor, créalo en la consola de Supabase antes de continuar."
+      }
     }
+    // Si es otro tipo de error (ej: 403 Forbidden por permisos restrictivos de la anon key),
+    // registramos una advertencia en la consola e intentamos continuar con la subida.
+    console.warn("Advertencia al validar la existencia del bucket 'products':", bucketError.message)
   }
 
   const files = formData.getAll("files") as File[]
@@ -380,6 +381,13 @@ export async function uploadProductImages(
 
       if (uploadError) {
         console.error("Error uploading to storage:", uploadError)
+        const err = uploadError as { status?: number; statusCode?: string; message?: string }
+        if (err.status === 404 || err.statusCode === "404" || err.message?.toLowerCase().includes("not found")) {
+          return {
+            success: false,
+            error: "El almacenamiento de imágenes ('products') no está configurado en Supabase. Por favor, créalo en la consola de Supabase antes de continuar."
+          }
+        }
         return { success: false, error: `Fallo al subir el archivo ${file.name} a Supabase Storage.` }
       }
 
@@ -388,16 +396,22 @@ export async function uploadProductImages(
         .from("products")
         .getPublicUrl(storagePath)
 
-      // Registrar en la base de datos
+      // Registrar en la base de datos (arquitectura preparada para storage_path)
+      const insertPayload: {
+        product_id: string
+        image_url: string
+        sort_order: number
+        storage_path?: string
+      } = {
+        product_id: productId,
+        image_url: publicUrl,
+        sort_order: nextSortOrder,
+        // storage_path: storagePath // Descomentar cuando la columna exista en la tabla de la BD
+      }
+
       const { error: dbError } = await supabase
         .from("product_images")
-        .insert([
-          {
-            product_id: productId,
-            image_url: publicUrl,
-            sort_order: nextSortOrder
-          }
-        ])
+        .insert([insertPayload])
 
       if (dbError) {
         console.error("Error saving image to DB:", dbError)
