@@ -1,2 +1,21 @@
-# kora-os
-KORA OS - Plataforma central de gestión para Grupo Kubbonet. Catálogo maestro, inventario, CRM, analítica y publicación omnicanal para WooCommerce, Mercado Libre, Falabella y otros marketplaces.
+# KORA OS
+
+Sistema operativo empresarial para Grupo Kubbonet.
+
+## Objetivos
+
+- Catálogo Maestro
+- WooCommerce
+- Mercado Libre
+- Falabella
+- Éxito
+- CRM
+- Inventario
+- Compras
+- Analítica
+- KORA AI
+
+## Documentación
+
+- docs/roadmap.md
+- docs/architecture.md
