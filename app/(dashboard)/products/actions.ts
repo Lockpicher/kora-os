@@ -318,6 +318,18 @@ export async function uploadProductImages(
   formData: FormData
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient()
+  console.log("URL:", process.env.NEXT_PUBLIC_SUPABASE_URL)
+
+  console.log("KEY TYPE:", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? "ANON_KEY" : "PUBLISHABLE_KEY")
+
+  const keyToUse = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || ""
+  console.log("KEY PREFIX:", keyToUse.substring(0, 20))
+
+  const bucketsRaw = await supabase.storage.listBuckets()
+  console.log("LIST_BUCKETS RAW:", bucketsRaw)
+
+  const bucket = await supabase.storage.getBucket("products")
+  console.log("GET_BUCKET:", JSON.stringify(bucket, null, 2))
 
   // 1. Verificar existencia del bucket "products" (sin intentar crearlo, mostrando error amigable si no existe)
   const { error: bucketError } = await supabase.storage.getBucket("products")
