@@ -309,22 +309,7 @@ export async function syncMercadoLibreListings() {
         const status = item.status
         const permalink = item.permalink
 
-        if (item.id === "MCO508930558") {
-          console.log("====================================")
-          console.log("SKU DEBUG ITEM:", item.id)
-          console.log("SELLER_CUSTOM_FIELD:")
-          console.log(item.seller_custom_field)
-          
-          console.log("VARIATIONS:")
-          console.log(JSON.stringify(item.variations, null, 2))
-          
-          console.log("ATTRIBUTES:")
-          console.log(JSON.stringify(item.attributes, null, 2))
-          
-          console.log("ITEM COMPLETO:")
-          console.log(JSON.stringify(item, null, 2))
-          console.log("====================================")
-        }
+        // Se ha removido el bloque de diagnóstico anterior para centrarse en la consulta global de /products
 
         const channelSku =
           item.seller_custom_field ||
@@ -392,9 +377,6 @@ export async function syncMercadoLibreListings() {
     }
 
     console.log("====================================")
-    console.log("SINCRONIZADOS:", syncedCount)
-    console.log("====================================")
-
     revalidatePath("/integrations/mercadolibre")
 
     return {
@@ -404,13 +386,61 @@ export async function syncMercadoLibreListings() {
     }
   } catch (e) {
     console.error("Exception in syncMercadoLibreListings:", e)
-
     return {
       success: false,
-      error:
-        e instanceof Error
-          ? e.message
-          : "Unknown error"
+      error: e instanceof Error ? e.message : "Unknown error"
     }
+  }
+}
+
+export async function testMLProduct() {
+  try {
+    const mlConnection = await getMLConnection()
+    if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
+      return { success: false, error: "No connection", status: 401 }
+    }
+
+    const access_token = await refreshMercadoLibreToken(mlConnection.connection)
+    
+    // 1. Diagnóstico Inventory
+    let inventoryResData = null
+    let inventoryStatus = null
+    try {
+      const invRes = await fetch(`https://api.mercadolibre.com/inventories/NUSK41503`, {
+        headers: { Authorization: `Bearer ${access_token}` }
+      })
+      inventoryStatus = invRes.status
+      inventoryResData = invRes.ok ? await invRes.json() : await invRes.text()
+    } catch(err: unknown) {
+      inventoryResData = String(err)
+    }
+
+    // 2. Diagnóstico Products
+    let productResData = null
+    let productStatus = null
+    try {
+      const prodRes = await fetch(`https://api.mercadolibre.com/products/MCOU2428208945`, {
+        headers: { Authorization: `Bearer ${access_token}` }
+      })
+      productStatus = prodRes.status
+      productResData = prodRes.ok ? await prodRes.json() : await prodRes.text()
+    } catch(err: unknown) {
+      productResData = String(err)
+    }
+    
+    const combinedResponse = {
+      inventory: {
+        status: inventoryStatus,
+        data: inventoryResData
+      },
+      product: {
+        status: productStatus,
+        data: productResData
+      }
+    }
+
+    return { success: true, status: 200, response: combinedResponse }
+  } catch (err: unknown) {
+    return { success: false, status: 500, response: err instanceof Error ? err.message : String(err) }
   }
 }
