@@ -99,21 +99,36 @@ export async function syncMercadoLibreListings() {
 
     const { access_token, external_user_id, channel_id } = mlConnection.connection
 
-    // 1. Fetch user's items from Mercado Libre
-    // ML API endpoint to search items by user
-    const itemsSearchRes = await fetch(`https://api.mercadolibre.com/users/${external_user_id}/items/search`, {
-      headers: {
-        "Authorization": `Bearer ${access_token}`
+    // 1. Fetch ALL user's items from Mercado Libre using pagination
+    let itemIds: string[] = []
+    let offset = 0
+    const limit = 50
+    let total = 1 // Inicializar > 0 para entrar al loop
+
+    while (offset < total) {
+      const itemsSearchRes = await fetch(`https://api.mercadolibre.com/users/${external_user_id}/items/search?offset=${offset}&limit=${limit}`, {
+        headers: {
+          "Authorization": `Bearer ${access_token}`
+        }
+      })
+
+      if (!itemsSearchRes.ok) {
+        const errBody = await itemsSearchRes.text()
+        return { success: false, error: `Error fetching ML items: ${itemsSearchRes.statusText}`, details: errBody }
       }
-    })
 
-    if (!itemsSearchRes.ok) {
-      const errBody = await itemsSearchRes.text()
-      return { success: false, error: `Error fetching ML items: ${itemsSearchRes.statusText}`, details: errBody }
+      const itemsSearchBody = await itemsSearchRes.json()
+      
+      if (itemsSearchBody.results && Array.isArray(itemsSearchBody.results)) {
+        itemIds = itemIds.concat(itemsSearchBody.results)
+      }
+
+      total = itemsSearchBody.paging?.total || 0
+      offset += limit
+      
+      // Safety break
+      if (itemIds.length >= total || offset >= total) break
     }
-
-    const itemsSearchBody = await itemsSearchRes.json()
-    const itemIds: string[] = itemsSearchBody.results || []
 
     if (itemIds.length === 0) {
       return { success: true, message: "No se encontraron publicaciones en Mercado Libre.", synced: 0 }
