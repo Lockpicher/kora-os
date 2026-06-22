@@ -265,6 +265,7 @@ export async function syncMercadoLibreListings() {
 
     const chunkSize = 20
     let syncedCount = 0
+    let loggedItemsCount = 0
 
     for (let i = 0; i < itemIds.length; i += chunkSize) {
       console.log(
@@ -308,6 +309,19 @@ export async function syncMercadoLibreListings() {
         const title = item.title
         const status = item.status
         const permalink = item.permalink
+
+        if (loggedItemsCount < 5) {
+          console.log(
+            "ML DEBUG",
+            JSON.stringify({
+              id: item.id,
+              seller_custom_field: item.seller_custom_field,
+              variations: item.variations,
+              attributes: item.attributes
+            }, null, 2)
+          )
+          loggedItemsCount++;
+        }
 
         const channelSku =
           item.seller_custom_field ||
