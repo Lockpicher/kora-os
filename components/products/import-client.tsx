@@ -75,8 +75,12 @@ export default function ImportClient() {
     })
   }, [allRows, search, statusFilter, categoryFilter, brandFilter, typeFilter])
 
-  const visibleRows = processedRows.filter(r => r._isVisible)
-  const rowsToImport = visibleRows.filter(r => !r._isExcluded)
+  const { visibleRows, rowsToImport } = useMemo(() => {
+    const visible = processedRows.filter(r => r._isVisible)
+    const toImport = visible.filter(r => !r._isExcluded)
+    return { visibleRows: visible, rowsToImport: toImport }
+  }, [processedRows])
+  
   const excludedCount = allRows.length - rowsToImport.length
 
   const detectedProducts = new Set(allRows.map(r => r.Producto).filter(Boolean)).size
@@ -108,11 +112,13 @@ export default function ImportClient() {
         Activo: r.Activo
       }))
 
+      console.log("DRY RUN START")
       processImportDryRun(csvData).then(res => {
+        console.log("DRY RUN END")
         setPreview(res)
         setIsProcessing(false)
       }).catch(err => {
-        console.error(err)
+        console.error("DRY RUN ERROR", err)
         setIsProcessing(false)
       })
     }, 500)
