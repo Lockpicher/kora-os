@@ -181,7 +181,10 @@ export default function ImportClient() {
       let isExcluded = false
       let excludeReason = ""
       const catLower = rawCat.toLowerCase()
-      if (catLower.includes("ropa") || catLower.includes("zapato") || catLower.includes("bolso") || catLower.includes("moda")) {
+      
+      const razziKeywords = ["kids", "shoe", "women", "men", "fashion", "bag", "clothing", "hoodie", "t-shirt", "ropa", "zapato", "bolso", "moda"]
+      
+      if (razziKeywords.some(kw => catLower.includes(kw))) {
         isExcluded = true
         excludeReason = "Categoría Demo Razzi"
       }
@@ -240,7 +243,17 @@ export default function ImportClient() {
   const excludedCount = allRows.length - rowsToImport.length
   const detectedProducts = new Set(allRows.map(r => r.Producto).filter(Boolean)).size
   const importableProducts = new Set(rowsToImport.map(r => r.Producto).filter(Boolean)).size
-  const variationsCount = rowsToImport.filter(r => r.Tipo === "variation").length
+  
+  // Counters for missing SKUs (to help user diagnose)
+  const missingSkuSimple = allRows.filter(r => !r.SKU.trim() && r.Tipo === "simple").length
+  const missingSkuVar = allRows.filter(r => !r.SKU.trim() && r.Tipo === "variation").length
+  const missingSkuRazzi = allRows.filter(r => !r.SKU.trim() && r._excludeReason === "Categoría Demo Razzi").length
+  
+  const totalRazzi = allRows.filter(r => r._excludeReason === "Categoría Demo Razzi").length
+  
+  const meridianKeywords = ["amatista", "turmalina", "cuarzo", "pirita", "chakra", "obsidiana", "japa", "collar", "pulsera", "tobillera"]
+  const totalMeridian = allRows.filter(r => meridianKeywords.some(kw => r.Categoria.toLowerCase().includes(kw))).length
+
 
   useEffect(() => {
     if (step !== 'filtering' || allRows.length === 0 || rowsToImport.length === 0) {
@@ -290,11 +303,14 @@ export default function ImportClient() {
         if (r.Estado === "Archivado") { exclude = true; reason = "Estado Archivado" }
       } else if (type === "no_razzi") {
         const cat = r.Categoria.toLowerCase()
-        if (cat.includes("ropa") || cat.includes("zapato") || cat.includes("bolso") || cat.includes("moda")) {
+        const razziKeywords = ["kids", "shoe", "women", "men", "fashion", "bag", "clothing", "hoodie", "t-shirt", "ropa", "zapato", "bolso", "moda"]
+        if (razziKeywords.some(kw => cat.includes(kw))) {
           exclude = true; reason = "Filtro Demo Razzi"
         }
       } else if (type === "only_meridian") {
-        if (r.Marca && r.Marca.toLowerCase() !== "meridian") { exclude = true; reason = "No es Meridian" }
+        const cat = r.Categoria.toLowerCase()
+        const meridianKeywords = ["amatista", "turmalina", "cuarzo", "pirita", "chakra", "obsidiana", "japa", "collar", "pulsera", "tobillera"]
+        if (!meridianKeywords.some(kw => cat.includes(kw))) { exclude = true; reason = "No es categoría Meridian" }
       }
 
       return { ...r, _isExcluded: exclude, _excludeReason: reason }
@@ -463,17 +479,25 @@ export default function ImportClient() {
                     <div className="text-xs leading-none">A importar</div>
                   </div>
                   <div className="px-3 py-1 bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-md">
-                    <div className="font-bold text-lg">{variationsCount}</div>
-                    <div className="text-xs leading-none">Variaciones</div>
+                    <div className="font-bold text-lg">{totalMeridian}</div>
+                    <div className="text-xs leading-none">Válidos Meridian</div>
                   </div>
                   <div className="px-3 py-1 bg-destructive/10 text-destructive rounded-md">
                     <div className="font-bold text-lg">{excludedCount}</div>
-                    <div className="text-xs leading-none">Excluidos</div>
+                    <div className="text-xs leading-none">Excluidos ({totalRazzi} Razzi)</div>
                   </div>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="pt-6 space-y-4">
+              
+              {/* Warnings de SKU Local */}
+              <div className="flex gap-4 text-xs bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-400 p-2 rounded border border-amber-200 dark:border-amber-900">
+                <strong>Análisis de SKU en las {allRows.length} filas totales:</strong>
+                <span>{missingSkuSimple} simples sin SKU</span>
+                <span>{missingSkuVar} variaciones sin SKU</span>
+                <span>{missingSkuRazzi} de Razzi sin SKU</span>
+              </div>
               <div className="flex flex-wrap gap-2 mb-2">
                 <span className="text-sm text-muted-foreground mr-2 self-center">Filtros Rápidos (Exclusión):</span>
                 <Button variant="outline" size="sm" onClick={() => applyQuickFilter("only_published")}>Solo Publicados</Button>
