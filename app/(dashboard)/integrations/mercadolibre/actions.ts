@@ -88,6 +88,85 @@ export async function getMLListings() {
   return data || []
 }
 
+export async function disconnectMercadoLibre(connectionId: string) {
+  try {
+    const supabase = await createClient()
+    await supabase
+      .from("channel_connections")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", connectionId)
+    
+    revalidatePath("/integrations/mercadolibre")
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Error desconocido al desconectar" }
+  }
+}
+
+export async function refreshMercadoLibreToken(connection: { id: string; access_token: string; refresh_token: string; expires_at: string; [key: string]: unknown }) {
+  const expiresAt = new Date(connection.expires_at).getTime()
+  const now = Date.now()
+  const REFRESH_MARGIN_MS = 15 * 60 * 1000 // 15 minutos
+
+  // Si el token aún es válido (considerando el margen), devolverlo tal cual
+  if (expiresAt > now + REFRESH_MARGIN_MS) {
+    return connection.access_token
+  }
+
+  // Token expirado o a punto de expirar, renovar
+  const appId = process.env.ML_APP_ID
+  const clientSecret = process.env.ML_CLIENT_SECRET
+
+  if (!appId || !clientSecret) {
+    throw new Error("Credenciales de Mercado Libre no configuradas en entorno")
+  }
+
+  const tokenResponse = await fetch("https://api.mercadolibre.com/oauth/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Accept": "application/json"
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: appId,
+      client_secret: clientSecret,
+      refresh_token: connection.refresh_token
+    })
+  })
+
+  const tokenData = await tokenResponse.json()
+  const supabase = await createClient()
+
+  if (!tokenResponse.ok) {
+    console.error("Refresh Token FAILED:", tokenData)
+    // Marcar conexión como inactiva si el refresh token murió
+    await supabase
+      .from("channel_connections")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", connection.id)
+
+    throw new Error("Mercado Libre requiere reconexión manual")
+  }
+
+  const { access_token, refresh_token, expires_in } = tokenData
+  const newExpiresAt = new Date(now + expires_in * 1000).toISOString()
+  const currentIso = new Date(now).toISOString()
+
+  await supabase
+    .from("channel_connections")
+    .update({
+      access_token,
+      refresh_token,
+      expires_at: newExpiresAt,
+      updated_at: currentIso,
+      last_refresh_at: currentIso
+    })
+    .eq("id", connection.id)
+
+  return access_token
+}
+
 export async function syncMercadoLibreListings() {
   try {
     const supabase = await createClient()
@@ -100,8 +179,10 @@ export async function syncMercadoLibreListings() {
       }
     }
 
-    const { access_token, external_user_id, channel_id } =
-      mlConnection.connection
+    const { external_user_id, channel_id } = mlConnection.connection
+    
+    // Obtener token fresco (se renueva automáticamente si expiró o está a punto de expirar)
+    const access_token = await refreshMercadoLibreToken(mlConnection.connection)
 
     console.log("====================================")
     console.log("INICIANDO SINCRONIZACIÓN ML")

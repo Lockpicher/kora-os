@@ -4,6 +4,7 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@
 import { Button } from "@/components/ui/button"
 import { getMLConnection, getMLListings } from "./actions"
 import SyncButton from "@/components/mercadolibre/sync-button"
+import DisconnectButton from "@/components/mercadolibre/disconnect-button"
 import Link from "next/link"
 
 export const metadata = {
@@ -20,6 +21,27 @@ export default async function MercadoLibrePage(
   const listings = await getMLListings()
 
   const { connected, connection, listingsCount, lastSyncDate } = connectionData
+
+  // Validación de Token
+  let tokenStatus = "Desconectado"
+  let tokenColor = "text-slate-400"
+  let tokenExpText = "N/A"
+  
+  if (connected && connection) {
+    const expiresAt = new Date(connection.expires_at).getTime()
+    const now = Date.now()
+    if (expiresAt > now) {
+      tokenStatus = "🟢 Token válido"
+      tokenColor = "text-emerald-500"
+    } else {
+      tokenStatus = "🔴 Token expirado"
+      tokenColor = "text-rose-500"
+    }
+    
+    // Formatear: YYYY-MM-DD HH:MM UTC
+    const dateObj = new Date(connection.expires_at)
+    tokenExpText = `Expira: ${dateObj.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+  }
 
   const formatCurrency = (value: number) => {
     return "$" + value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
@@ -44,9 +66,17 @@ export default async function MercadoLibrePage(
             Importa y audita publicaciones (Read Only). 
           </p>
         </div>
-        <div>
+        <div className="flex items-center gap-2">
           {connected ? (
-            <SyncButton />
+            <>
+              <Button asChild variant="outline" className="gap-2">
+                <Link href="/api/ml/auth">
+                  <LinkIcon className="h-4 w-4" /> Reconectar Cuenta
+                </Link>
+              </Button>
+              <SyncButton />
+              <DisconnectButton connectionId={connection.id} />
+            </>
           ) : (
             <Button asChild className="gap-2">
               <Link href="/api/ml/auth">
@@ -76,15 +106,11 @@ export default async function MercadoLibrePage(
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground">Estado de Conexión</CardTitle>
-            <Key className={`h-4 w-4 ${connected ? 'text-emerald-500' : 'text-slate-400'}`} />
+            <Key className={`h-4 w-4 ${tokenColor}`} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {connected ? (
-                <span className="text-emerald-500">Activo</span>
-              ) : (
-                <span className="text-slate-400">Desconectado</span>
-              )}
+            <div className="text-xl font-bold">
+              <span className={tokenColor}>{tokenStatus}</span>
             </div>
             <div className="text-xs text-muted-foreground mt-1 truncate">
               {connected ? connection?.account_name : "Requiere autorización OAuth"}
@@ -98,7 +124,7 @@ export default async function MercadoLibrePage(
             <Clock className="h-4 w-4 text-blue-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
+            <div className="text-xl font-bold">
               {lastSyncDate ? new Date(lastSyncDate).toLocaleDateString() : "Nunca"}
             </div>
             <div className="text-xs text-muted-foreground mt-1 truncate">
@@ -110,14 +136,14 @@ export default async function MercadoLibrePage(
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground">Expiración Token</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            <AlertTriangle className={`h-4 w-4 ${tokenColor}`} />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {connection?.expires_at ? new Date(connection.expires_at).toLocaleDateString() : "N/A"}
+            <div className="text-lg font-bold">
+              {tokenExpText}
             </div>
             <div className="text-xs text-muted-foreground mt-1 truncate">
-               El token se refrescará automáticamente
+               {connected && connection?.last_refresh_at ? `Última renovación: ${new Date(connection.last_refresh_at).toLocaleTimeString()}` : "Renovación al sincronizar"}
             </div>
           </CardContent>
         </Card>
