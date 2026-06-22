@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Layers, Plus, Edit, ToggleLeft, ToggleRight, Loader2, AlertCircle } from "lucide-react"
+import { Layers, Plus, Edit, ToggleLeft, ToggleRight, Loader2, AlertCircle, Package } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -20,7 +20,13 @@ import {
   updateVariant,
   toggleVariantStatus,
   getVariantAttributes,
-  VariantInput
+  VariantInput,
+  getInventoryMovementTypes,
+  getInventoryMovements,
+  createInventoryMovement,
+  InventoryMovementType,
+  InventoryMovementRecord,
+  InventoryMovementInput
 } from "@/app/(dashboard)/products/actions"
 import {
   getAttributeDefinitionsByCategory,
@@ -81,6 +87,29 @@ export default function ProductVariants({
 
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [submitError, setSubmitError] = React.useState("")
+
+  // Inventory Management State
+  const [isInvOpen, setIsInvOpen] = React.useState(false)
+  const [invVariant, setInvVariant] = React.useState<ProductVariant | null>(null)
+  const [movements, setMovements] = React.useState<InventoryMovementRecord[]>([])
+  const [movementTypes, setMovementTypes] = React.useState<InventoryMovementType[]>([])
+  const [isLoadingInv, setIsLoadingInv] = React.useState(false)
+  
+  const [invType, setInvType] = React.useState("")
+  const [invQty, setInvQty] = React.useState("")
+  const [invRef, setInvRef] = React.useState("")
+  const [invNotes, setInvNotes] = React.useState("")
+  const [invSubmitting, setInvSubmitting] = React.useState(false)
+  const [invError, setInvError] = React.useState("")
+
+  // Load Inventory Movement Types
+  React.useEffect(() => {
+    async function loadTypes() {
+      const res = await getInventoryMovementTypes()
+      if (res.success && res.types) setMovementTypes(res.types)
+    }
+    loadTypes()
+  }, [])
 
   // Load variants from database
   const loadVariants = React.useCallback(async () => {
@@ -332,6 +361,74 @@ export default function ProductVariants({
     }
   }
 
+  // Open Inventory Management Modal
+  const handleInventoryOpen = async (variant: ProductVariant) => {
+    setInvVariant(variant)
+    setMovements([])
+    setInvType("")
+    setInvQty("")
+    setInvRef("")
+    setInvNotes("")
+    setInvError("")
+    setIsLoadingInv(true)
+    setIsInvOpen(true)
+
+    try {
+      const res = await getInventoryMovements(variant.id)
+      if (res.success && res.movements) {
+        setMovements(res.movements)
+      }
+    } catch (e) {
+      console.error("Error loading movements:", e)
+    } finally {
+      setIsLoadingInv(false)
+    }
+  }
+
+  // Submit New Inventory Movement
+  const handleInvSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!invVariant || !invType || !invQty) return
+
+    const qty = parseInt(invQty, 10)
+    if (isNaN(qty) || qty === 0) {
+      setInvError("La cantidad debe ser un número distinto de cero.")
+      return
+    }
+
+    setInvSubmitting(true)
+    setInvError("")
+
+    try {
+      const payload: InventoryMovementInput = {
+        variant_id: invVariant.id,
+        movement_type_id: invType,
+        quantity: qty,
+        reference: invRef.trim(),
+        notes: invNotes.trim()
+      }
+
+      const res = await createInventoryMovement(payload)
+      
+      if (res.success) {
+        // Recargar historial y listado general de variantes
+        setInvQty("")
+        setInvRef("")
+        setInvNotes("")
+        setInvType("")
+        loadVariants()
+        handleInventoryOpen(invVariant) // Refresca el modal actual
+      } else {
+        setInvError(res.error || "Ocurrió un error al registrar el movimiento.")
+      }
+    } catch (e) {
+      console.error("Error creating movement:", e)
+      setInvError("Error de red o servidor. Inténtalo de nuevo.")
+    } finally {
+      setInvSubmitting(false)
+    }
+  }
+
   return (
     <Card className="bg-card border-border">
       <CardHeader className="flex flex-row items-center justify-between pb-4">
@@ -444,6 +541,16 @@ export default function ProductVariants({
                             ) : (
                               <ToggleRight className="h-5 w-5 text-muted-foreground" />
                             )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            disabled={isItemLoading}
+                            onClick={() => handleInventoryOpen(v)}
+                            title="Gestión de Inventario"
+                            className="h-8 w-8 text-blue-500 hover:text-blue-600 hover:bg-blue-500/10"
+                          >
+                            <Package className="h-4 w-4" />
                           </Button>
                         </div>
                       </TableCell>
@@ -674,6 +781,149 @@ export default function ProductVariants({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog para Gestión de Inventario */}
+      <Dialog open={isInvOpen} onOpenChange={setIsInvOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader className="pb-4 shrink-0 border-b border-border">
+            <DialogTitle>Inventario: {invVariant?.name}</DialogTitle>
+            <DialogDescription>
+              SKU: {invVariant?.sku} | Stock Actual: <span className="font-mono text-foreground font-bold">{invVariant?.stock}</span>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-6 py-4 overflow-y-auto">
+            {/* Nuevo Movimiento */}
+            <div className="bg-muted/10 p-4 rounded-xl border border-border">
+              <h4 className="text-sm font-semibold mb-4 text-foreground">Registrar Movimiento</h4>
+              
+              <form onSubmit={handleInvSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">Tipo de Movimiento *</label>
+                    <select
+                      value={invType}
+                      onChange={(e) => setInvType(e.target.value)}
+                      required
+                      className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring text-foreground"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {movementTypes.map(t => (
+                        <option key={t.id} value={t.id}>{t.name} ({t.operation})</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">Cantidad *</label>
+                    <Input
+                      type="number"
+                      value={invQty}
+                      onChange={(e) => setInvQty(e.target.value)}
+                      required
+                      placeholder="Ej: 5"
+                      className="h-9 font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">Referencia (Opcional)</label>
+                    <Input
+                      value={invRef}
+                      onChange={(e) => setInvRef(e.target.value)}
+                      placeholder="Ej: FAC-1234, Devolución #98..."
+                      className="h-9 font-mono text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground">Notas (Opcional)</label>
+                    <Input
+                      value={invNotes}
+                      onChange={(e) => setInvNotes(e.target.value)}
+                      placeholder="Detalles adicionales..."
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+
+                {invError && (
+                  <div className="flex items-center gap-2 p-2.5 bg-destructive/10 text-destructive text-xs rounded-lg border border-destructive/20 mt-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <p className="font-semibold">{invError}</p>
+                  </div>
+                )}
+
+                <Button type="submit" disabled={invSubmitting} className="w-full">
+                  {invSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                  Registrar Movimiento
+                </Button>
+              </form>
+            </div>
+
+            {/* Historial */}
+            <div>
+              <h4 className="text-sm font-semibold mb-4 text-foreground">Historial de Movimientos</h4>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fecha</TableHead>
+                      <TableHead>Tipo</TableHead>
+                      <TableHead>Referencia</TableHead>
+                      <TableHead className="text-right">Cantidad</TableHead>
+                      <TableHead className="text-right">Saldos (Ant → Act)</TableHead>
+                      <TableHead>Usuario</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoadingInv ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto" />
+                        </TableCell>
+                      </TableRow>
+                    ) : movements.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                          No hay movimientos registrados.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      movements.map((m) => {
+                        const isPos = m.inventory_movement_types?.operation === "IN" || (m.inventory_movement_types?.operation === "ADJUST" && m.quantity > 0)
+                        return (
+                          <TableRow key={m.id}>
+                            <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                              {new Date(m.created_at).toLocaleString()}
+                            </TableCell>
+                            <TableCell className="text-xs font-medium text-foreground">
+                              {m.inventory_movement_types?.name}
+                            </TableCell>
+                            <TableCell className="text-xs font-mono text-muted-foreground">
+                              {m.reference || "-"}
+                            </TableCell>
+                            <TableCell className={`text-right font-mono text-xs font-bold ${isPos ? "text-emerald-500" : "text-rose-500"}`}>
+                              {isPos ? "+" : ""}{m.inventory_movement_types?.operation === "OUT" ? -Math.abs(m.quantity) : m.quantity}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                              {m.stock_before} <span className="text-border">→</span> <span className="text-foreground font-semibold">{m.stock_after}</span>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground truncate max-w-[100px]">
+                              {m.created_by || "Sistema"}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </Card>

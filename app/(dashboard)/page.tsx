@@ -1,130 +1,187 @@
 import { createClient } from "@/lib/supabase/server"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Package, Bookmark, FolderTree, ArrowUpRight, Sliders, Boxes } from "lucide-react"
-import Link from "next/link"
+import DashboardClient from "@/components/dashboard/dashboard-client"
 
 export const revalidate = 0 // Evita que se cacheen las estadísticas y siempre consulte a Supabase
+
+export interface DashboardVariant {
+  id: string
+  sku: string
+  name: string
+  external_reference: string | null
+  stock: number
+  price: number
+  current_cost: number | null
+  product_name: string
+  utilidad: number
+  margen: number
+  valor_inventario: number
+  utilidad_potencial: number
+  status_badge: string
+}
+
+export interface DashboardMetrics {
+  total_inventory: number
+  total_value: number
+  potential_profit: number
+  purchases_month: number
+  average_cost: number
+  out_of_stock: number
+  
+  inventory_coverage: string
+  immobilized_capital: number
+  inventory_concentration: number
+  
+  health_total: number
+  health_no_cost: number
+  health_no_price: number
+}
+
+type RawVariant = {
+  id: string
+  sku: string
+  name: string
+  external_reference: string | null
+  stock: number | null
+  price: number | null
+  current_cost: number | null
+  products: { name: string } | { name: string }[] | null
+}
 
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  // Consultar estadísticas de la base de datos de manera concurrente
-  const [productsRes, brandsRes, categoriesRes, attributesRes, variantsRes] = await Promise.all([
-    supabase.from("products").select("*", { count: "exact", head: true }).eq("active", true),
-    supabase.from("brands").select("*", { count: "exact", head: true }).eq("active", true),
-    supabase.from("categories").select("*", { count: "exact", head: true }).eq("active", true),
-    supabase.from("attribute_definitions").select("*", { count: "exact", head: true }).eq("active", true),
-    supabase.from("product_variants").select("*", { count: "exact", head: true }).eq("active", true),
-  ])
+  // 1. Cargar Variantes Activas
+  const { data: variantsRawData, error: varError } = await supabase
+    .from("product_variants")
+    .select(`
+      id,
+      sku,
+      name,
+      external_reference,
+      stock,
+      price,
+      current_cost,
+      products ( name )
+    `)
+    .eq("active", true)
 
-  const stats = [
-    {
-      title: "Productos Activos",
-      value: productsRes.count || 0,
-      icon: Package,
-      description: "Catálogo maestro",
-      color: "text-violet-500",
-      bg: "bg-violet-500/10",
-      href: "/products",
-    },
-    {
-      title: "Marcas Activas",
-      value: brandsRes.count || 0,
-      icon: Bookmark,
-      description: "Marcas Grupo Kubbonet",
-      color: "text-blue-500",
-      bg: "bg-blue-500/10",
-      href: "/brands",
-    },
-    {
-      title: "Categorías Activas",
-      value: categoriesRes.count || 0,
-      icon: FolderTree,
-      description: "Estructura de catálogo",
-      color: "text-emerald-500",
-      bg: "bg-emerald-500/10",
-      href: "/categories",
-    },
-    {
-      title: "Atributos Configurados",
-      value: attributesRes.count || 0,
-      icon: Sliders,
-      description: "Atributos dinámicos",
-      color: "text-amber-500",
-      bg: "bg-amber-500/10",
-      href: "/attributes",
-    },
-    {
-      title: "Variantes Activas",
-      value: variantsRes.count || 0,
-      icon: Boxes,
-      description: "Variantes comerciales",
-      color: "text-indigo-500",
-      bg: "bg-indigo-500/10",
-      href: "/products",
-    },
-  ]
+  if (varError) {
+    console.error("Error fetching variants for dashboard:", varError)
+  }
+
+  // 2. Cargar Órdenes de Compra del Mes
+  const startOfMonth = new Date()
+  startOfMonth.setDate(1)
+  startOfMonth.setHours(0, 0, 0, 0)
+
+  const { data: poData, error: poError } = await supabase
+    .from("purchase_orders")
+    .select("total")
+    .eq("status", "received")
+    .gte("created_at", startOfMonth.toISOString())
+
+  if (poError) {
+    console.error("Error fetching purchase orders for dashboard:", poError)
+  }
+
+  // === Motor de Cálculo Ejecutivo ===
+
+  const variants: DashboardVariant[] = []
+  let total_inventory = 0
+  let total_value = 0
+  let potential_profit = 0
+  
+  let out_of_stock = 0
+  let immobilized_capital = 0
+  
+  let health_total = 0
+  let health_no_cost = 0
+  let health_no_price = 0
+
+  const rawData = (variantsRawData || []) as unknown as RawVariant[]
+
+  for (const v of rawData) {
+    const stock = v.stock || 0
+    const price = v.price || 0
+    const cost = v.current_cost || 0
+    
+    const utilidad = price - cost
+    const margen = price > 0 ? (utilidad / price) * 100 : 0
+    const valor_inventario = stock * cost
+    const utilidad_potencial = utilidad * stock
+
+    let status_badge = "🟢 Rentable"
+    if (cost <= 0) status_badge = "🔴 Sin costo"
+    else if (price <= 0) status_badge = "🔴 Sin precio"
+    else if (margen < 30) status_badge = "🟡 Margen bajo"
+
+    const prodName = Array.isArray(v.products) ? v.products[0]?.name : v.products?.name
+    
+    variants.push({
+      id: v.id,
+      sku: v.sku || "N/A",
+      name: v.name,
+      external_reference: v.external_reference || null,
+      stock,
+      price,
+      current_cost: v.current_cost,
+      product_name: prodName || "Desconocido",
+      utilidad,
+      margen,
+      valor_inventario,
+      utilidad_potencial,
+      status_badge
+    })
+
+    health_total++
+    if (stock <= 0) out_of_stock++
+    if (v.current_cost === null || v.current_cost <= 0) health_no_cost++
+    if (v.price === null || v.price <= 0) health_no_price++
+
+    if (stock > 0) {
+      total_inventory += stock
+      total_value += valor_inventario
+      potential_profit += utilidad_potencial
+      
+      if (utilidad_potencial <= 0) {
+        immobilized_capital += valor_inventario
+      }
+    }
+  }
+
+  const purchases_month = poData ? poData.reduce((acc, curr) => acc + Number(curr.total), 0) : 0
+  const average_cost = total_inventory > 0 ? total_value / total_inventory : 0
+
+  // Concentración de Inventario (Top 10 Valor)
+  const sortedByValue = [...variants].sort((a, b) => b.valor_inventario - a.valor_inventario)
+  const top10Value = sortedByValue.slice(0, 10).reduce((acc, curr) => acc + curr.valor_inventario, 0)
+  const inventory_concentration = total_value > 0 ? (top10Value / total_value) * 100 : 0
+
+  const metrics: DashboardMetrics = {
+    total_inventory,
+    total_value,
+    potential_profit,
+    purchases_month,
+    average_cost,
+    out_of_stock,
+    inventory_coverage: "N/A",
+    immobilized_capital,
+    inventory_concentration,
+    health_total,
+    health_no_cost,
+    health_no_price
+  }
 
   return (
     <div className="space-y-8">
       <div>
-        <h2 className="text-3xl font-bold tracking-tight text-foreground">Dashboard</h2>
+        <h2 className="text-3xl font-bold tracking-tight text-foreground">Dashboard Ejecutivo</h2>
         <p className="text-muted-foreground mt-2">
-          Bienvenido a KORA OS. Aquí tienes un resumen del estado de tu catálogo maestro.
+          Análisis de rentabilidad y salud del inventario KORA OS.
         </p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
-        {stats.map((stat) => {
-          const Icon = stat.icon
-          return (
-            <Card key={stat.title} className="hover:border-primary/50 transition-colors duration-200">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {stat.title}
-                </CardTitle>
-                <div className={`${stat.bg} p-2 rounded-md`}>
-                  <Icon className={`h-5 w-5 ${stat.color}`} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-foreground">{stat.value}</div>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-muted-foreground">{stat.description}</span>
-                  <Link
-                    href={stat.href}
-                    className="text-xs text-primary hover:underline flex items-center"
-                  >
-                    Ver detalles <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
-
-      {/* Info panel */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle>Estado de Integración de Base de Datos</CardTitle>
-          <CardDescription>
-            Conexión en vivo con el backend de Supabase PostgreSQL
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center space-x-3 text-sm">
-            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-muted-foreground">Conectado a la base de datos de Supabase.</span>
-          </div>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Esta versión inicial de KORA OS (Fase 1A) lee directamente los productos, marcas y categorías
-            creados en tu instancia de Supabase. El menú lateral te permite gestionar cada uno de estos
-            módulos en tiempo real.
-          </p>
-        </CardContent>
-      </Card>
+      <DashboardClient metrics={metrics} variants={variants} />
     </div>
   )
 }

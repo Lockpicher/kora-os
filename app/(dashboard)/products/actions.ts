@@ -894,3 +894,248 @@ export async function getVariantAttributes(
   return { success: true, values: data || [] }
 }
 
+// === FASE 4A: INVENTARIO BASADO EN MOVIMIENTOS ===
+
+export interface InventoryMovementType {
+  id: string
+  name: string
+  code: string
+  operation: "IN" | "OUT" | "ADJUST"
+  active: boolean
+}
+
+export interface InventoryMovementInput {
+  variant_id: string
+  movement_type_id: string
+  quantity: number
+  reference?: string
+  notes?: string
+  unit_cost?: number
+  total_cost?: number
+}
+
+export interface InventoryMovementRecord {
+  id: string
+  variant_id: string
+  movement_type_id: string
+  quantity: number
+  stock_before: number
+  stock_after: number
+  reference?: string | null
+  created_by?: string | null
+  notes?: string | null
+  unit_cost?: number | null
+  total_cost?: number | null
+  created_at: string
+  inventory_movement_types?: {
+    name: string
+    code: string
+    operation: "IN" | "OUT" | "ADJUST"
+  }
+}
+
+// Obtener todos los tipos de movimiento activos
+export async function getInventoryMovementTypes(): Promise<{ success: boolean; types?: InventoryMovementType[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("inventory_movement_types")
+    .select("*")
+    .eq("active", true)
+    .order("name", { ascending: true })
+
+  if (error) {
+    console.error("Error fetching inventory movement types:", error)
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, types: data || [] }
+}
+
+// Calcular stock exacto desde movimientos
+export async function getVariantCurrentStock(variantId: string): Promise<{ success: boolean; stock?: number; error?: string }> {
+  const supabase = await createClient()
+  
+  // Agrupamos por operation y sumamos las cantidades
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select(`
+      quantity,
+      inventory_movement_types!inner(operation)
+    `)
+    .eq("variant_id", variantId)
+
+  if (error) {
+    console.error("Error fetching variant current stock:", error)
+    return { success: false, error: error.message }
+  }
+
+  let totalStock = 0
+  if (data && data.length > 0) {
+    type MovData = { quantity: number; inventory_movement_types: { operation: string } | { operation: string }[] }
+    for (const raw of data as unknown as MovData[]) {
+      const types = raw.inventory_movement_types
+      const op = Array.isArray(types) ? types[0]?.operation : types?.operation
+      
+      if (op === "IN") {
+        totalStock += raw.quantity
+      } else if (op === "OUT") {
+        totalStock -= raw.quantity
+      } else if (op === "ADJUST") {
+        totalStock += raw.quantity // delta (puede ser negativo o positivo)
+      }
+    }
+  }
+
+  return { success: true, stock: totalStock }
+}
+
+// Obtener historial de movimientos
+export async function getInventoryMovements(variantId: string): Promise<{ success: boolean; movements?: InventoryMovementRecord[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("inventory_movements")
+    .select(`
+      *,
+      inventory_movement_types!inner(name, code, operation)
+    `)
+    .eq("variant_id", variantId)
+    .order("created_at", { ascending: false })
+
+  if (error) {
+    console.error("Error fetching inventory movements:", error)
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, movements: data || [] }
+}
+
+// Registrar un nuevo movimiento
+export async function createInventoryMovement(data: InventoryMovementInput): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Obtener el tipo de movimiento
+  const { data: moveType, error: typeError } = await supabase
+    .from("inventory_movement_types")
+    .select("operation, code")
+    .eq("id", data.movement_type_id)
+    .single()
+
+  if (typeError || !moveType) {
+    return { success: false, error: "Tipo de movimiento no válido." }
+  }
+
+  // Validar cantidad = 0
+  if (data.quantity === 0) {
+    return { success: false, error: "La cantidad no puede ser cero." }
+  }
+  
+  // Validar negativos en UI
+  if (moveType.operation !== "ADJUST" && data.quantity < 0) {
+     return { success: false, error: "Para entradas y salidas la cantidad debe ser positiva." }
+  }
+
+  // 2. Obtener el stock actual (stock_before)
+  const stockRes = await getVariantCurrentStock(data.variant_id)
+  if (!stockRes.success) {
+    return { success: false, error: "No se pudo calcular el stock actual de la variante." }
+  }
+  const stock_before = stockRes.stock || 0
+
+  // 3. Validar salidas
+  if (moveType.operation === "OUT") {
+    if (stock_before - data.quantity < 0) {
+      return { success: false, error: "Stock insuficiente." }
+    }
+  }
+
+  // 4. Calcular stock_after
+  let stock_after = stock_before
+  if (moveType.operation === "IN") stock_after += data.quantity
+  else if (moveType.operation === "OUT") stock_after -= data.quantity
+  else if (moveType.operation === "ADJUST") stock_after += data.quantity // Ajuste es delta (ej: -3)
+
+  // 5. Insertar movimiento
+  const { error: insertError } = await supabase
+    .from("inventory_movements")
+    .insert([
+      {
+        variant_id: data.variant_id,
+        movement_type_id: data.movement_type_id,
+        quantity: data.quantity, // Siempre guardamos quantity tal cual (positivo para IN/OUT, delta para ADJUST)
+        stock_before,
+        stock_after,
+        reference: data.reference || null,
+        notes: data.notes || null,
+        unit_cost: data.unit_cost || null,
+        total_cost: data.total_cost || null,
+        created_by: "Sistema" // Podríamos tomarlo del JWT auth cuando haya login
+      }
+    ])
+
+  if (insertError) {
+    console.error("Error inserting inventory movement:", insertError)
+    return { success: false, error: "No se pudo registrar el movimiento: " + insertError.message }
+  }
+
+  // 6. Actualizar product_variants.stock (legacy update)
+  const { error: updateError } = await supabase
+    .from("product_variants")
+    .update({ stock: stock_after })
+    .eq("id", data.variant_id)
+
+  if (updateError) {
+    console.error("Error updating variant legacy stock:", updateError)
+    // No fallamos la transacción porque el kardex ya está guardado, pero alertamos en logs.
+  }
+
+  revalidatePath("/products")
+  revalidatePath("/") // Revalidar dashboard
+  return { success: true }
+}
+
+export interface VariantListItem {
+  id: string
+  sku: string
+  name: string
+  current_cost: number | null
+  products: { id: string; name: string } | null
+}
+
+export async function getAllVariants(): Promise<{ success: boolean; variants?: VariantListItem[]; error?: string }> {
+  const supabase = await createClient()
+  
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select(`
+      id,
+      sku,
+      name,
+      current_cost,
+      products ( id, name )
+    `)
+    .eq("active", true)
+
+  if (error) {
+    console.error("Error fetching all variants:", error)
+    return { success: false, error: error.message }
+  }
+
+  type RawVariant = {
+    id: string
+    sku: string
+    name: string
+    current_cost: number | null
+    products: { id: string; name: string } | { id: string; name: string }[] | null
+  }
+
+  const rawData = data as unknown as RawVariant[]
+  const formatted: VariantListItem[] = rawData.map(v => ({
+    id: v.id,
+    sku: v.sku,
+    name: v.name,
+    current_cost: v.current_cost,
+    products: Array.isArray(v.products) ? v.products[0] || null : v.products
+  }))
+
+  return { success: true, variants: formatted }
+}
