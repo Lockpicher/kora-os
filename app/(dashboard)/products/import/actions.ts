@@ -167,10 +167,14 @@ export async function executeImport(rows: CSVRow[]) {
     if (!row.Producto?.trim() || !row.SKU?.trim()) return
     const slug = generateSlug(row.Producto.trim(), row.Marca?.trim() || "")
     if (!productMap[slug] && !uniqueProductsMap[slug]) {
+      const fallbackBrandId = '5ee6ff65-5e90-4d10-a565-96860ae1045a'
+      const assignedBrandId = row.Marca?.trim() ? (brandMap[row.Marca.trim()] || fallbackBrandId) : fallbackBrandId
+      console.log(`[Import] Producto: ${row.Producto.trim()} | Marca detectada: ${row.Marca || 'Vacia'} | Brand ID asignado: ${assignedBrandId}`)
+
       uniqueProductsMap[slug] = {
         name: row.Producto.trim(),
         slug,
-        brand_id: row.Marca?.trim() ? brandMap[row.Marca.trim()] : null,
+        brand_id: assignedBrandId,
         category_id: row.Categoria?.trim() ? catMap[row.Categoria.trim()] : null,
         active: true,
         sku: `PROD-${slug}`, // FASE TEMPORAL para evitar constraint NOT NULL
