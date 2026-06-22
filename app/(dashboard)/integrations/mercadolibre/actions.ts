@@ -112,9 +112,9 @@ export async function syncMercadoLibreListings() {
     // PASO 1 - OBTENER TODOS LOS IDS
     // ==========================
 
-    let itemIds: string[] = []
+    const itemIds: string[] = []
     let offset = 0
-    const limit = 100
+    const limit = 50
     let total = 1
 
     while (offset < total) {
