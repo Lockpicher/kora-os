@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Package, FolderTree, Bookmark } from "lucide-react"
+import { LayoutDashboard, Package, FolderTree, Bookmark, Sliders } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const navigation = [
@@ -10,6 +10,7 @@ const navigation = [
   { name: "Productos", href: "/products", icon: Package },
   { name: "Categorías", href: "/categories", icon: FolderTree },
   { name: "Marcas", href: "/brands", icon: Bookmark },
+  { name: "Atributos", href: "/attributes", icon: Sliders },
 ]
 
 export default function Sidebar() {

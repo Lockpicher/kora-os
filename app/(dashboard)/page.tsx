@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Package, Bookmark, FolderTree, ArrowUpRight } from "lucide-react"
+import { Package, Bookmark, FolderTree, ArrowUpRight, Sliders, Boxes } from "lucide-react"
 import Link from "next/link"
 
 export const revalidate = 0 // Evita que se cacheen las estadísticas y siempre consulte a Supabase
@@ -9,10 +9,12 @@ export default async function DashboardPage() {
   const supabase = await createClient()
 
   // Consultar estadísticas de la base de datos de manera concurrente
-  const [productsRes, brandsRes, categoriesRes] = await Promise.all([
+  const [productsRes, brandsRes, categoriesRes, attributesRes, variantsRes] = await Promise.all([
     supabase.from("products").select("*", { count: "exact", head: true }).eq("active", true),
     supabase.from("brands").select("*", { count: "exact", head: true }).eq("active", true),
     supabase.from("categories").select("*", { count: "exact", head: true }).eq("active", true),
+    supabase.from("attribute_definitions").select("*", { count: "exact", head: true }).eq("active", true),
+    supabase.from("product_variants").select("*", { count: "exact", head: true }).eq("active", true),
   ])
 
   const stats = [
@@ -43,6 +45,24 @@ export default async function DashboardPage() {
       bg: "bg-emerald-500/10",
       href: "/categories",
     },
+    {
+      title: "Atributos Configurados",
+      value: attributesRes.count || 0,
+      icon: Sliders,
+      description: "Atributos dinámicos",
+      color: "text-amber-500",
+      bg: "bg-amber-500/10",
+      href: "/attributes",
+    },
+    {
+      title: "Variantes Activas",
+      value: variantsRes.count || 0,
+      icon: Boxes,
+      description: "Variantes comerciales",
+      color: "text-indigo-500",
+      bg: "bg-indigo-500/10",
+      href: "/products",
+    },
   ]
 
   return (
@@ -55,7 +75,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-5">
         {stats.map((stat) => {
           const Icon = stat.icon
           return (

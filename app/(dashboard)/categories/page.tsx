@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { getCategories, createCategory, updateCategory, toggleCategoryStatus } from "./actions"
+import { getAttributeDefinitions, AttributeDefinition } from "../attributes/actions"
 
 interface Category {
   id: string
@@ -27,6 +28,7 @@ interface Category {
 
 export default function CategoriesPage() {
   const [categories, setCategories] = React.useState<Category[]>([])
+  const [attributes, setAttributes] = React.useState<AttributeDefinition[]>([])
   const [isLoading, setIsLoading] = React.useState(true)
   const [searchQuery, setSearchQuery] = React.useState("")
 
@@ -38,12 +40,18 @@ export default function CategoriesPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [submitError, setSubmitError] = React.useState("")
 
-  // Cargar categorías
+  // Cargar categorías y atributos
   const loadCategories = React.useCallback(async () => {
     setIsLoading(true)
     try {
-      const data = await getCategories()
-      setCategories(data as Category[])
+      const [catsData, attrsRes] = await Promise.all([
+        getCategories(),
+        getAttributeDefinitions()
+      ])
+      setCategories(catsData as Category[])
+      if (attrsRes.success && attrsRes.attributes) {
+        setAttributes(attrsRes.attributes)
+      }
     } catch (error) {
       console.error("Error loading categories:", error)
     } finally {
@@ -204,68 +212,88 @@ export default function CategoriesPage() {
                 <TableRow>
                   <TableHead>Nombre</TableHead>
                   <TableHead>Slug</TableHead>
+                  <TableHead>Atributos</TableHead>
                   <TableHead className="w-[120px]">Estado</TableHead>
                   <TableHead className="w-[120px] text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredList.map(({ category, depth }) => (
-                  <TableRow key={category.id}>
-                    <TableCell className="font-medium text-foreground">
-                      <div className="flex items-center">
-                        {/* Indentación visual */}
-                        {depth > 0 && (
-                          <div
-                            className="flex shrink-0 items-center justify-end text-muted-foreground mr-1"
-                            style={{ width: `${depth * 24}px` }}
-                          >
-                            <CornerDownRight className="h-4 w-4 mr-1 opacity-70" />
-                          </div>
-                        )}
-                        <Folder className="h-4 w-4 mr-2 text-violet-500 shrink-0" />
-                        <span>{category.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {category.slug}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
-                          category.active
-                            ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-                            : "bg-destructive/10 text-destructive border-destructive/20"
-                        }`}
-                      >
-                        {category.active ? "Activo" : "Inactivo"}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEditOpen(category)}
-                          title="Editar Categoría"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleToggleStatus(category)}
-                          title={category.active ? "Desactivar Categoría" : "Activar Categoría"}
-                        >
-                          {category.active ? (
-                            <ToggleLeft className="h-5 w-5 text-emerald-500" />
-                          ) : (
-                            <ToggleRight className="h-5 w-5 text-muted-foreground" />
+                {filteredList.map(({ category, depth }) => {
+                  const catAttrs = attributes.filter((a) => a.category_id === category.id && a.active)
+                  return (
+                    <TableRow key={category.id}>
+                      <TableCell className="font-medium text-foreground">
+                        <div className="flex items-center">
+                          {/* Indentación visual */}
+                          {depth > 0 && (
+                            <div
+                              className="flex shrink-0 items-center justify-end text-muted-foreground mr-1"
+                              style={{ width: `${depth * 24}px` }}
+                            >
+                              <CornerDownRight className="h-4 w-4 mr-1 opacity-70" />
+                            </div>
                           )}
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          <Folder className="h-4 w-4 mr-2 text-violet-500 shrink-0" />
+                          <span>{category.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {category.slug}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {catAttrs.length === 0 ? (
+                            <span className="text-xs text-muted-foreground italic">Ninguno</span>
+                          ) : (
+                            catAttrs.map((attr) => (
+                              <span
+                                key={attr.id}
+                                className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20"
+                              >
+                                {attr.name}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${
+                            category.active
+                              ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
+                              : "bg-destructive/10 text-destructive border-destructive/20"
+                          }`}
+                        >
+                          {category.active ? "Activo" : "Inactivo"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEditOpen(category)}
+                            title="Editar Categoría"
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleToggleStatus(category)}
+                            title={category.active ? "Desactivar Categoría" : "Activar Categoría"}
+                          >
+                            {category.active ? (
+                              <ToggleLeft className="h-5 w-5 text-emerald-500" />
+                            ) : (
+                              <ToggleRight className="h-5 w-5 text-muted-foreground" />
+                            )}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

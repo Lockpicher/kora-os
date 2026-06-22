@@ -10,8 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { cn } from "@/lib/utils"
 import { getBrands } from "../../brands/actions"
 import { getCategories } from "../../categories/actions"
-import { getProductById, updateProduct } from "../actions"
+import { getProductById, updateProduct, getProductAttributeValues } from "../actions"
 import ProductImages from "@/components/products/product-images"
+import { getAttributeDefinitionsByCategory, getAttributeOptions, AttributeDefinition } from "../../attributes/actions"
+import ProductVariants from "@/components/products/product-variants"
 
 export default function EditProductPage() {
   const router = useRouter()
@@ -41,6 +43,12 @@ export default function EditProductPage() {
   const [length, setLength] = React.useState("")
   const [width, setWidth] = React.useState("")
   const [height, setHeight] = React.useState("")
+
+  // Dynamic attributes
+  const [attrDefinitions, setAttrDefinitions] = React.useState<AttributeDefinition[]>([])
+  const [attrOptions, setAttrOptions] = React.useState<{ [key: string]: string[] }>({})
+  const [attrValues, setAttrValues] = React.useState<{ [key: string]: string }>({})
+  const [isLoadingAttrs, setIsLoadingAttrs] = React.useState(false)
 
   React.useEffect(() => {
     async function loadData() {
@@ -88,6 +96,70 @@ export default function EditProductPage() {
     }
   }, [productId])
 
+  React.useEffect(() => {
+    async function loadCategoryAttributes() {
+      if (!categoryId) {
+        setAttrDefinitions([])
+        setAttrOptions({})
+        setAttrValues({})
+        return
+      }
+
+      setIsLoadingAttrs(true)
+      try {
+        const res = await getAttributeDefinitionsByCategory(categoryId)
+        if (res.success && res.attributes) {
+          setAttrDefinitions(res.attributes)
+
+          // Fetch options for select attributes
+          const selectAttrs = res.attributes.filter(a => a.data_type === "select")
+          const optionsObj: { [key: string]: string[] } = {}
+          
+          await Promise.all(
+            selectAttrs.map(async (attr) => {
+              const optRes = await getAttributeOptions(attr.id)
+              if (optRes.success && optRes.options) {
+                optionsObj[attr.id] = optRes.options.map(o => o.value)
+              } else {
+                optionsObj[attr.id] = []
+              }
+            })
+          )
+
+          setAttrOptions(optionsObj)
+
+          // Fetch the existing product attribute values
+          const valsRes = await getProductAttributeValues(productId)
+          const existingVals = (valsRes.success && valsRes.values) ? valsRes.values : []
+
+          // Initialize/Merge values
+          const initialValues: { [key: string]: string } = {}
+          res.attributes.forEach(attr => {
+            const match = existingVals.find(ev => ev.attribute_definition_id === attr.id)
+            if (match) {
+              initialValues[attr.id] = match.value_text
+            } else if (attr.data_type === "boolean") {
+              initialValues[attr.id] = "false"
+            } else {
+              initialValues[attr.id] = ""
+            }
+          })
+          setAttrValues(initialValues)
+        } else {
+          setAttrDefinitions([])
+        }
+      } catch (e) {
+        console.error("Error loading category attributes:", e)
+      } finally {
+        setIsLoadingAttrs(false)
+      }
+    }
+
+    if (productId) {
+      loadCategoryAttributes()
+    }
+  }, [categoryId, productId])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -120,7 +192,12 @@ export default function EditProductPage() {
         height: Number(height) || 0,
       }
 
-      const res = await updateProduct(productId, productInput, dimensionsInput)
+      const attributeValuesArray = attrDefinitions.map(attr => ({
+        attribute_definition_id: attr.id,
+        value_text: attrValues[attr.id] || (attr.data_type === "boolean" ? "false" : "")
+      }))
+
+      const res = await updateProduct(productId, productInput, dimensionsInput, attributeValuesArray)
       if (!res.success) {
         if (res.error === "duplicate_sku") {
           setErrorMsg("Ya existe un producto con el SKU ingresado. Utiliza un SKU diferente.")
@@ -258,6 +335,107 @@ export default function EditProductPage() {
             </CardContent>
           </Card>
 
+          {/* Card 1.5: Atributos Dinámicos de la Categoría */}
+          {categoryId && attrDefinitions.length > 0 && (
+            <Card className="border-border bg-card">
+              <CardHeader>
+                <CardTitle>Atributos de la Categoría</CardTitle>
+                <CardDescription>
+                  Especificaciones personalizadas para los productos clasificados bajo esta categoría.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                {isLoadingAttrs ? (
+                  <div className="flex h-16 items-center justify-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    <span className="ml-2 text-sm text-muted-foreground">Cargando atributos...</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    {attrDefinitions.map((attr) => {
+                      const value = attrValues[attr.id] || ""
+                      
+                      return (
+                        <div key={attr.id} className="flex flex-col gap-2">
+                          <label htmlFor={`attr-${attr.id}`} className="text-sm font-medium text-foreground">
+                            {attr.name} {attr.required && "*"}
+                          </label>
+                          
+                          {attr.data_type === "text" && (
+                            <Input
+                              id={`attr-${attr.id}`}
+                              value={value}
+                              onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.value })}
+                              required={attr.required}
+                              placeholder={`Ingresa ${attr.name.toLowerCase()}...`}
+                              className="bg-card border-border"
+                            />
+                          )}
+
+                          {attr.data_type === "textarea" && (
+                            <textarea
+                              id={`attr-${attr.id}`}
+                              value={value}
+                              onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.value })}
+                              required={attr.required}
+                              placeholder={`Ingresa ${attr.name.toLowerCase()}...`}
+                              rows={3}
+                              className="flex w-full rounded-md border border-input bg-card px-3 py-2 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring text-foreground border-border"
+                            />
+                          )}
+
+                          {attr.data_type === "number" && (
+                            <Input
+                              id={`attr-${attr.id}`}
+                              type="number"
+                              value={value}
+                              onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.value })}
+                              required={attr.required}
+                              placeholder="0"
+                              className="bg-card border-border font-mono"
+                            />
+                          )}
+
+                          {attr.data_type === "boolean" && (
+                            <div className="flex h-9 items-center">
+                              <input
+                                type="checkbox"
+                                id={`attr-${attr.id}`}
+                                checked={value === "true"}
+                                onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.checked ? "true" : "false" })}
+                                className="h-4 w-4 accent-primary rounded border-border"
+                              />
+                              <label htmlFor={`attr-${attr.id}`} className="text-sm ml-2 text-muted-foreground">
+                                Habilitado / Sí
+                              </label>
+                            </div>
+                          )}
+
+                          {attr.data_type === "select" && (
+                            <select
+                              id={`attr-${attr.id}`}
+                              value={value}
+                              onChange={(e) => setAttrValues({ ...attrValues, [attr.id]: e.target.value })}
+                              required={attr.required}
+                              className="flex h-9 w-full rounded-md border border-input bg-card px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring text-foreground"
+                            >
+                              <option value="">Selecciona...</option>
+                              {(attrOptions[attr.id] || []).map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Card 2: Precios e Inventario */}
           <Card>
             <CardHeader>
@@ -382,6 +560,14 @@ export default function EditProductPage() {
 
       {/* Gestión de Imágenes del Producto (Fase 2A) */}
       <ProductImages productId={productId} />
+
+      {/* Variantes del Producto (Fase 3B) */}
+      <ProductVariants
+        productId={productId}
+        categoryId={categoryId}
+        productName={name}
+        parentSku={sku}
+      />
     </div>
   )
 }

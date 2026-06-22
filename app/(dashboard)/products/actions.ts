@@ -23,6 +23,11 @@ export interface DimensionsInput {
   height: number
 }
 
+export interface AttributeValueInput {
+  attribute_definition_id: string
+  value_text: string
+}
+
 // Obtener todos los productos con filtros (Búsqueda por SKU/Nombre, Marca, Categoría, Estado)
 export async function getProducts(filters?: {
   search?: string
@@ -100,10 +105,11 @@ export async function getProductById(id: string) {
   }
 }
 
-// Crear un nuevo producto con dimensiones logísticas
+// Crear un nuevo producto con dimensiones logísticas y atributos dinámicos
 export async function createProduct(
   productData: ProductInput,
-  dimensionsData: DimensionsInput
+  dimensionsData: DimensionsInput,
+  attributeValues: AttributeValueInput[]
 ): Promise<{ success: boolean; error?: string; product?: unknown }> {
   const supabase = await createClient()
   const slug = slugify(productData.name, { lower: true, strict: true })
@@ -156,6 +162,25 @@ export async function createProduct(
     return { success: false, error: `Producto creado, pero falló el registro logístico: ${dimsError.message}` }
   }
 
+  // 3. Insertar atributos dinámicos en 'product_attribute_values'
+  if (attributeValues && attributeValues.length > 0) {
+    const valuesPayload = attributeValues
+      .map((val) => ({
+        product_id: createdProduct.id,
+        attribute_definition_id: val.attribute_definition_id,
+        value_text: val.value_text
+      }))
+
+    const { error: valsError } = await supabase
+      .from("product_attribute_values")
+      .insert(valuesPayload)
+
+    if (valsError) {
+      console.error("Error inserting product attribute values:", valsError)
+      return { success: false, error: `Producto creado, pero falló la carga de atributos: ${valsError.message}` }
+    }
+  }
+
   revalidatePath("/products")
   revalidatePath("/") // Revalidar dashboard
   return { success: true, product: createdProduct }
@@ -165,7 +190,8 @@ export async function createProduct(
 export async function updateProduct(
   id: string,
   productData: ProductInput,
-  dimensionsData: DimensionsInput
+  dimensionsData: DimensionsInput,
+  attributeValues: AttributeValueInput[]
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient()
   const slug = slugify(productData.name, { lower: true, strict: true })
@@ -236,6 +262,35 @@ export async function updateProduct(
     if (dimsError) {
       console.error("Error inserting dimensions during update:", dimsError)
       return { success: false, error: dimsError.message }
+    }
+  }
+
+  // 3. Limpiar y guardar valores de atributos dinámicos
+  const { error: deleteValsError } = await supabase
+    .from("product_attribute_values")
+    .delete()
+    .eq("product_id", id)
+
+  if (deleteValsError) {
+    console.error("Error clearing old attribute values during update:", deleteValsError)
+    return { success: false, error: `Fallo al limpiar atributos antiguos: ${deleteValsError.message}` }
+  }
+
+  if (attributeValues && attributeValues.length > 0) {
+    const valuesPayload = attributeValues
+      .map((val) => ({
+        product_id: id,
+        attribute_definition_id: val.attribute_definition_id,
+        value_text: val.value_text
+      }))
+
+    const { error: valsError } = await supabase
+      .from("product_attribute_values")
+      .insert(valuesPayload)
+
+    if (valsError) {
+      console.error("Error saving updated attribute values:", valsError)
+      return { success: false, error: `Fallo al guardar nuevos valores de atributos: ${valsError.message}` }
     }
   }
 
@@ -622,3 +677,220 @@ export async function setAsMainProductImage(
   revalidatePath(`/products/${productId}`)
   return { success: true }
 }
+
+// Obtener los valores guardados de atributos para un producto
+export async function getProductAttributeValues(
+  productId: string
+): Promise<{ success: boolean; values?: { attribute_definition_id: string; value_text: string }[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_attribute_values")
+    .select("attribute_definition_id, value_text")
+    .eq("product_id", productId)
+
+  if (error) {
+    console.error("Error fetching product attribute values:", error)
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, values: data || [] }
+}
+
+// === FASE 3B: GESTIÓN DE VARIANTES DE PRODUCTO ===
+
+export interface VariantInput {
+  sku: string
+  name: string
+  cost: number
+  price: number
+  stock: number
+  barcode?: string
+  external_reference?: string
+  attributeValues: { attribute_definition_id: string; value_text: string }[]
+}
+
+// Obtener todas las variantes de un producto
+export async function getProductVariants(
+  productId: string
+): Promise<{ success: boolean; variants?: unknown[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select("*")
+    .eq("product_id", productId)
+    .order("created_at", { ascending: true })
+
+  if (error) {
+    console.error("Error fetching product variants:", error)
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, variants: data || [] }
+}
+
+// Crear una variante y guardar transaccionalmente sus atributos en product_variant_attribute_values
+export async function createVariant(
+  productId: string,
+  data: VariantInput
+): Promise<{ success: boolean; error?: string; variant?: unknown }> {
+  const supabase = await createClient()
+
+  // 1. Insertar la variante en 'product_variants'
+  const { data: variant, error: variantError } = await supabase
+    .from("product_variants")
+    .insert([
+      {
+        product_id: productId,
+        sku: data.sku.trim().toUpperCase(),
+        name: data.name.trim(),
+        cost: data.cost,
+        price: data.price,
+        stock: data.stock,
+        barcode: data.barcode?.trim() || null,
+        external_reference: data.external_reference?.trim() || null,
+        active: true
+      }
+    ])
+    .select()
+
+  if (variantError) {
+    console.error("Error inserting variant:", variantError)
+    if (variantError.code === "23505" || variantError.message?.includes("product_variants_sku_key")) {
+      return { success: false, error: "duplicate_sku" }
+    }
+    return { success: false, error: variantError.message }
+  }
+
+  const createdVariant = variant[0]
+
+  // 2. Insertar valores de atributos en 'product_variant_attribute_values'
+  if (data.attributeValues && data.attributeValues.length > 0) {
+    const valuesPayload = data.attributeValues
+      .map((val) => ({
+        variant_id: createdVariant.id,
+        attribute_definition_id: val.attribute_definition_id,
+        value_text: val.value_text
+      }))
+
+    const { error: valsError } = await supabase
+      .from("product_variant_attribute_values")
+      .insert(valuesPayload)
+
+    if (valsError) {
+      console.error("Error inserting variant attribute values:", valsError)
+      // Cleanup the inserted variant on failure to maintain integrity
+      await supabase.from("product_variants").delete().eq("id", createdVariant.id)
+      return { success: false, error: `Variante creada, pero falló la carga de atributos: ${valsError.message}` }
+    }
+  }
+
+  revalidatePath("/products")
+  revalidatePath("/") // Revalidar dashboard por si cambia la métrica de variantes
+  return { success: true, variant: createdVariant }
+}
+
+// Actualizar una variante existente, sus campos y recrear sus atributos de variante
+export async function updateVariant(
+  id: string,
+  data: VariantInput
+): Promise<{ success: boolean; error?: string }> {
+  const supabase = await createClient()
+
+  // 1. Actualizar variante en 'product_variants'
+  const { error: variantError } = await supabase
+    .from("product_variants")
+    .update({
+      sku: data.sku.trim().toUpperCase(),
+      name: data.name.trim(),
+      cost: data.cost,
+      price: data.price,
+      stock: data.stock,
+      barcode: data.barcode?.trim() || null,
+      external_reference: data.external_reference?.trim() || null
+    })
+    .eq("id", id)
+
+  if (variantError) {
+    console.error("Error updating variant:", variantError)
+    if (variantError.code === "23505" || variantError.message?.includes("product_variants_sku_key")) {
+      return { success: false, error: "duplicate_sku" }
+    }
+    return { success: false, error: variantError.message }
+  }
+
+  // 2. Limpiar atributos anteriores
+  const { error: deleteValsError } = await supabase
+    .from("product_variant_attribute_values")
+    .delete()
+    .eq("variant_id", id)
+
+  if (deleteValsError) {
+    console.error("Error clearing old variant attribute values:", deleteValsError)
+    return { success: false, error: `Fallo al limpiar atributos antiguos de variante: ${deleteValsError.message}` }
+  }
+
+  // 3. Registrar los nuevos atributos de variante
+  if (data.attributeValues && data.attributeValues.length > 0) {
+    const valuesPayload = data.attributeValues
+      .map((val) => ({
+        variant_id: id,
+        attribute_definition_id: val.attribute_definition_id,
+        value_text: val.value_text
+      }))
+
+    const { error: valsError } = await supabase
+      .from("product_variant_attribute_values")
+      .insert(valuesPayload)
+
+    if (valsError) {
+      console.error("Error saving updated variant attribute values:", valsError)
+      return { success: false, error: `Fallo al guardar nuevos atributos de variante: ${valsError.message}` }
+    }
+  }
+
+  revalidatePath("/products")
+  revalidatePath("/") // Revalidar dashboard
+  return { success: true }
+}
+
+// Alternar estado activo/inactivo (Soft Delete de variantes)
+export async function toggleVariantStatus(
+  id: string,
+  currentStatus: boolean
+): Promise<{ success: boolean; error?: string; variant?: unknown }> {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from("product_variants")
+    .update({ active: !currentStatus })
+    .eq("id", id)
+    .select()
+
+  if (error) {
+    console.error("Error toggling variant status:", error)
+    return { success: false, error: error.message }
+  }
+
+  revalidatePath("/products")
+  revalidatePath("/") // Revalidar dashboard
+  return { success: true, variant: data[0] }
+}
+
+// Obtener los valores guardados de atributos para una variante
+export async function getVariantAttributes(
+  variantId: string
+): Promise<{ success: boolean; values?: { attribute_definition_id: string; value_text: string }[]; error?: string }> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("product_variant_attribute_values")
+    .select("attribute_definition_id, value_text")
+    .eq("variant_id", variantId)
+
+  if (error) {
+    console.error("Error fetching variant attribute values:", error)
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, values: data || [] }
+}
+
