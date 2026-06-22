@@ -110,7 +110,21 @@ export async function processImportDryRun(rows: CSVRow[]): Promise<ImportPreview
 }
 
 export async function executeImport(rows: CSVRow[]) {
+  console.log(`[Import] INIT - Filas recibidas: ${rows?.length || 0}`)
+  
+  if (!rows || rows.length === 0) {
+    return { success: false, error: "No se recibieron filas." }
+  }
+
   const supabase = await createClient()
+  
+  const stats = {
+    productosNuevos: 0,
+    productosActualizados: 0,
+    variantesUpsertadas: 0,
+    variantesFallidas: 0,
+    errores: [] as string[]
+  }
   
   // Agrupar filas por marca y categoría para insertarlas primero
   const brandsSet = new Set(rows.map(r => r.Marca?.trim()).filter(Boolean))
@@ -164,11 +178,14 @@ export async function executeImport(rows: CSVRow[]) {
   })
 
   const productsToInsert = Object.values(uniqueProductsMap)
+  console.log(`[Import] STEP 3 - Número de productos únicos agrupados a insertar: ${productsToInsert.length}`)
+  
   if (productsToInsert.length > 0) {
-    console.log(`[Import] Procesando ${productsToInsert.length} productos nuevos...`)
+    console.log(`[Import] Primer producto a procesar:`, productsToInsert[0])
     
-    for (const prod of productsToInsert) {
-      console.log(`[Import] Upserting producto: ${prod.name} (Slug: ${prod.slug})`)
+    for (const [index, prod] of productsToInsert.entries()) {
+      if (index === 0) console.log(`[Import] Intentando upsert del primer producto: ${prod.name} (Slug: ${prod.slug})`)
+      
       const { data: insertedProduct, error: pErr } = await supabase
         .from("products")
         .upsert(prod, { onConflict: "slug" })
@@ -176,10 +193,15 @@ export async function executeImport(rows: CSVRow[]) {
         .single()
         
       if (pErr) {
-        console.error(`[Import] Error upserting product ${prod.name}:`, pErr)
+        console.error(`[Import] Error upserting product ${prod.name}:`, JSON.stringify(pErr))
+        stats.errores.push(`Error producto ${prod.name}: ${pErr.message}`)
       } else if (insertedProduct) {
-        console.log(`[Import] Resultado del upsert en products: Éxito, ID=${insertedProduct.id}`)
+        if (index === 0) console.log(`[Import] Resultado exitoso del upsert del primer producto, ID Obtenido=${insertedProduct.id}`)
         productMap[prod.slug] = insertedProduct.id
+        stats.productosNuevos++
+      } else {
+         console.warn(`[Import] Upsert sin error pero con data=null para ${prod.name}`)
+         stats.errores.push(`Data null para producto ${prod.name}`)
       }
     }
   }
@@ -193,14 +215,16 @@ export async function executeImport(rows: CSVRow[]) {
     const slug = generateSlug(row.Producto.trim(), row.Marca?.trim() || "")
     const productId = productMap[slug]
     
-    console.log(`[Import] Producto detectado: ${row.Producto}, Slug generado: ${slug}, product_id obtenido: ${productId}`)
+    if (validVariantsToUpsert.length === 0) {
+       console.log(`[Import] STEP 4 - Primera variante detectada: ${row.Producto} / ${row.Variante}. Slug buscado: ${slug}, product_id en cache: ${productId}`)
+    }
     
     if (!productId) {
-      console.error(`[Import] Error: product_id es null para el producto ${row.Producto} (Slug: ${slug}). Omitiendo variante ${row.Variante} (SKU: ${row.SKU}).`)
+      if (validVariantsToUpsert.length === 0) console.error(`[Import] Error Crítico: product_id null para el primer producto ${row.Producto}`)
+      stats.variantesFallidas++
+      stats.errores.push(`Variante omitida: no se encontró product_id para ${row.Producto}`)
       continue
     }
-
-    console.log(`[Import] Variante preparada para insertarse: ${row.Variante} (SKU: ${row.SKU}) para product_id: ${productId}`)
 
     validVariantsToUpsert.push({
       product_id: productId,
@@ -226,17 +250,31 @@ export async function executeImport(rows: CSVRow[]) {
 
   if (uniqueVariantsMap.size > 0) {
     console.log(`[Import] Ejecutando Upsert final de ${uniqueVariantsMap.size} variantes...`)
-    const { error: vErr } = await supabase
+    const { data: vData, error: vErr } = await supabase
       .from("product_variants")
       .upsert(Array.from(uniqueVariantsMap.values()), { onConflict: "sku" })
+      .select("id")
     
     if (vErr) {
-      console.error("[Import] Error upserting variants:", vErr)
-      return { success: false, error: "Error insertando variantes: " + vErr.message }
+      console.error("[Import] Error upserting variants:", JSON.stringify(vErr))
+      stats.errores.push("Error batch upsert variantes: " + vErr.message)
+    } else if (vData) {
+      console.log(`[Import] Importación de variantes completada exitosamente. Total devuelto: ${vData.length}`)
+      stats.variantesUpsertadas = vData.length
+    } else {
+      console.warn(`[Import] Upsert de variantes devuelto con data null`)
+      stats.errores.push("Batch upsert devolvió data null")
     }
-    console.log(`[Import] Importación de variantes completada exitosamente.`)
   }
 
+  console.log(`[Import] RESUMEN FINAL:
+  Productos creados: ${stats.productosNuevos}
+  Productos actualizados: ${stats.productosActualizados}
+  Variantes creadas/actualizadas: ${stats.variantesUpsertadas}
+  Variantes fallidas: ${stats.variantesFallidas}
+  Errores detectados: ${stats.errores.length}
+  `)
+
   revalidatePath("/products")
-  return { success: true }
+  return { success: stats.errores.length === 0, stats, error: stats.errores.join(" | ") }
 }
