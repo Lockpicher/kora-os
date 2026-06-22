@@ -393,7 +393,7 @@ export async function syncMercadoLibreListings() {
   }
 }
 
-export async function testMLProduct() {
+export async function testUserProduct() {
   try {
     const mlConnection = await getMLConnection()
     if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
@@ -402,44 +402,45 @@ export async function testMLProduct() {
 
     const access_token = await refreshMercadoLibreToken(mlConnection.connection)
     
-    // 1. Diagnóstico Inventory
-    let inventoryResData = null
-    let inventoryStatus = null
-    try {
-      const invRes = await fetch(`https://api.mercadolibre.com/inventories/NUSK41503`, {
-        headers: { Authorization: `Bearer ${access_token}` }
-      })
-      inventoryStatus = invRes.status
-      inventoryResData = invRes.ok ? await invRes.json() : await invRes.text()
-    } catch(err: unknown) {
-      inventoryResData = String(err)
-    }
-
-    // 2. Diagnóstico Products
-    let productResData = null
-    let productStatus = null
-    try {
-      const prodRes = await fetch(`https://api.mercadolibre.com/products/MCOU2428208945`, {
-        headers: { Authorization: `Bearer ${access_token}` }
-      })
-      productStatus = prodRes.status
-      productResData = prodRes.ok ? await prodRes.json() : await prodRes.text()
-    } catch(err: unknown) {
-      productResData = String(err)
-    }
+    const res = await fetch(`https://api.mercadolibre.com/user-products/MCOU2428208945`, {
+      headers: { Authorization: `Bearer ${access_token}` }
+    })
     
-    const combinedResponse = {
-      inventory: {
-        status: inventoryStatus,
-        data: inventoryResData
-      },
-      product: {
-        status: productStatus,
-        data: productResData
-      }
+    const headersObj = Object.fromEntries(res.headers.entries())
+    const data = res.ok ? await res.json() : await res.text()
+    
+    return { success: res.ok, status: res.status, headers: headersObj, response: data }
+  } catch (err: unknown) {
+    return { success: false, status: 500, response: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function testInventoryItem() {
+  try {
+    const mlConnection = await getMLConnection()
+    if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
+      return { success: false, error: "No connection", status: 401 }
     }
 
-    return { success: true, status: 200, response: combinedResponse }
+    const access_token = await refreshMercadoLibreToken(mlConnection.connection)
+    
+    let res = await fetch(`https://api.mercadolibre.com/inventory_items/NUSK41503`, {
+      headers: { Authorization: `Bearer ${access_token}` }
+    })
+    
+    let endpoint = "inventory_items"
+    
+    if (!res.ok) {
+      res = await fetch(`https://api.mercadolibre.com/stock/store/items/NUSK41503`, {
+        headers: { Authorization: `Bearer ${access_token}` }
+      })
+      endpoint = "stock/store/items"
+    }
+
+    const headersObj = Object.fromEntries(res.headers.entries())
+    const data = res.ok ? await res.json() : await res.text()
+    
+    return { success: res.ok, endpoint, status: res.status, headers: headersObj, response: data }
   } catch (err: unknown) {
     return { success: false, status: 500, response: err instanceof Error ? err.message : String(err) }
   }
