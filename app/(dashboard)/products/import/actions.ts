@@ -165,17 +165,44 @@ export async function executeImport(rows: CSVRow[]) {
 
   const productsToInsert = Object.values(uniqueProductsMap)
   if (productsToInsert.length > 0) {
-    const { data: insertedProducts, error: pErr } = await supabase.from("products").insert(productsToInsert).select("id, slug")
-    if (pErr) console.error("Error inserting products:", pErr)
-    insertedProducts?.forEach(p => { productMap[p.slug] = p.id })
+    console.log(`[Import] Procesando ${productsToInsert.length} productos nuevos...`)
+    
+    for (const prod of productsToInsert) {
+      console.log(`[Import] Upserting producto: ${prod.name} (Slug: ${prod.slug})`)
+      const { data: insertedProduct, error: pErr } = await supabase
+        .from("products")
+        .upsert(prod, { onConflict: "slug" })
+        .select("id")
+        .single()
+        
+      if (pErr) {
+        console.error(`[Import] Error upserting product ${prod.name}:`, pErr)
+      } else if (insertedProduct) {
+        console.log(`[Import] Resultado del upsert en products: Éxito, ID=${insertedProduct.id}`)
+        productMap[prod.slug] = insertedProduct.id
+      }
+    }
   }
 
   // 4. Resolve Variants
-  const variantsToUpsert = rows.filter(r => r.Producto?.trim() && r.SKU?.trim()).map(row => {
+  const validVariantsToUpsert = []
+  
+  for (const row of rows) {
+    if (!row.Producto?.trim() || !row.SKU?.trim()) continue
+    
     const slug = generateSlug(row.Producto.trim(), row.Marca?.trim() || "")
     const productId = productMap[slug]
     
-    return {
+    console.log(`[Import] Producto detectado: ${row.Producto}, Slug generado: ${slug}, product_id obtenido: ${productId}`)
+    
+    if (!productId) {
+      console.error(`[Import] Error: product_id es null para el producto ${row.Producto} (Slug: ${slug}). Omitiendo variante ${row.Variante} (SKU: ${row.SKU}).`)
+      continue
+    }
+
+    console.log(`[Import] Variante preparada para insertarse: ${row.Variante} (SKU: ${row.SKU}) para product_id: ${productId}`)
+
+    validVariantsToUpsert.push({
       product_id: productId,
       sku: row.SKU.trim(),
       name: row.Variante?.trim() || "Única",
@@ -186,26 +213,28 @@ export async function executeImport(rows: CSVRow[]) {
       external_reference: row.Referencia_Externa?.trim() || null,
       image_url: row.URL_Imagen?.trim() || null,
       active: (row.Estado?.trim().toLowerCase() === "publicado" || row.Activo?.trim().toLowerCase() !== "no") ? true : false
-    }
-  })
+    })
+  }
 
   // Eliminar duplicados de SKU en el mismo lote si es que hay para evitar error
   const uniqueVariantsMap = new Map()
-  for (const variant of variantsToUpsert) {
+  for (const variant of validVariantsToUpsert) {
     if (!uniqueVariantsMap.has(variant.sku)) {
       uniqueVariantsMap.set(variant.sku, variant)
     }
   }
 
   if (uniqueVariantsMap.size > 0) {
+    console.log(`[Import] Ejecutando Upsert final de ${uniqueVariantsMap.size} variantes...`)
     const { error: vErr } = await supabase
       .from("product_variants")
       .upsert(Array.from(uniqueVariantsMap.values()), { onConflict: "sku" })
     
     if (vErr) {
-      console.error("Error upserting variants:", vErr)
+      console.error("[Import] Error upserting variants:", vErr)
       return { success: false, error: "Error insertando variantes: " + vErr.message }
     }
+    console.log(`[Import] Importación de variantes completada exitosamente.`)
   }
 
   revalidatePath("/products")
