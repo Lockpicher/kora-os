@@ -314,6 +314,9 @@ export async function syncMercadoLibreListings() {
         const channelSku =
           item.seller_custom_field ||
           null
+          
+        const inventoryId = item.inventory_id || null
+        const userProductId = item.user_product_id || null
 
         let variantId = null
         let syncStatus = "success"
@@ -354,6 +357,8 @@ export async function syncMercadoLibreListings() {
           source_data: item,
           last_sync_status: syncStatus,
           sync_error: syncError,
+          user_product_id: userProductId,
+          inventory_id: inventoryId,
           synced_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }
