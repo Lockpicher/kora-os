@@ -265,7 +265,6 @@ export async function syncMercadoLibreListings() {
 
     const chunkSize = 20
     let syncedCount = 0
-    let loggedItemsCount = 0
 
     for (let i = 0; i < itemIds.length; i += chunkSize) {
       console.log(
@@ -310,17 +309,21 @@ export async function syncMercadoLibreListings() {
         const status = item.status
         const permalink = item.permalink
 
-        if (loggedItemsCount < 5) {
-          console.log(
-            "ML DEBUG",
-            JSON.stringify({
-              id: item.id,
-              seller_custom_field: item.seller_custom_field,
-              variations: item.variations,
-              attributes: item.attributes
-            }, null, 2)
-          )
-          loggedItemsCount++;
+        if (item.id === "MCO508930558") {
+          console.log("====================================")
+          console.log("SKU DEBUG ITEM:", item.id)
+          console.log("SELLER_CUSTOM_FIELD:")
+          console.log(item.seller_custom_field)
+          
+          console.log("VARIATIONS:")
+          console.log(JSON.stringify(item.variations, null, 2))
+          
+          console.log("ATTRIBUTES:")
+          console.log(JSON.stringify(item.attributes, null, 2))
+          
+          console.log("ITEM COMPLETO:")
+          console.log(JSON.stringify(item, null, 2))
+          console.log("====================================")
         }
 
         const channelSku =
