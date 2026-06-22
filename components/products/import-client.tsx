@@ -343,6 +343,20 @@ export default function ImportClient() {
     }))
   }
 
+  const excludeInvalidRows = () => {
+    setAllRows(prev => prev.map(r => {
+      let exclude = r._isExcluded
+      let reason = r._excludeReason
+
+      if (!r.Producto?.trim()) {
+        exclude = true
+        reason = "Error: Falta Nombre de Producto"
+      }
+
+      return { ...r, _isExcluded: exclude, _excludeReason: reason }
+    }))
+  }
+
   const toggleRowExclusion = (index: number) => {
     setAllRows(prev => {
       const copy = [...prev]
@@ -624,7 +638,7 @@ export default function ImportClient() {
                       </TableRow>
                     ) : (
                       visibleRows.slice(0, 100).map((r, i) => (
-                        <TableRow key={i} className={r._isExcluded ? "opacity-50 bg-muted/30" : ""}>
+                        <TableRow key={i} className={`${r._isExcluded ? "opacity-50 bg-muted/30" : ""} ${!r.Producto?.trim() ? "bg-destructive/10 border-destructive" : ""}`}>
                           <TableCell>
                             <Switch 
                               checked={!r._isExcluded} 
@@ -632,9 +646,15 @@ export default function ImportClient() {
                             />
                           </TableCell>
                           <TableCell className="font-medium text-xs">
-                            {r.Producto}
+                            {r.Producto || <span className="text-destructive font-bold">¡SIN NOMBRE!</span>}
                             {r.Variante && r.Variante !== "Única" && <span className="block text-muted-foreground">{r.Variante}</span>}
                             {r._isExcluded && <span className="block text-destructive mt-1">Excluido: {r._excludeReason}</span>}
+                            {!r.Producto?.trim() && !r._isExcluded && <span className="block text-destructive mt-1 font-bold">⚠️ Esta fila bloqueará la importación</span>}
+                            {!r.Producto?.trim() && (
+                               <div className="mt-2 p-1 bg-background text-[10px] text-muted-foreground border rounded">
+                                 Crudo: {JSON.stringify(r._original).substring(0, 50)}...
+                               </div>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="font-mono text-xs">{r.SKU || "-"}</div>
@@ -695,6 +715,14 @@ export default function ImportClient() {
                     <ul className="text-xs space-y-1 text-destructive/80 list-disc list-inside max-h-32 overflow-auto">
                       {preview.errors.map((e, i) => <li key={i}>{e}</li>)}
                     </ul>
+                    <Button 
+                      variant="destructive" 
+                      size="sm" 
+                      className="mt-4"
+                      onClick={excludeInvalidRows}
+                    >
+                      Excluir automáticamente las filas con errores
+                    </Button>
                   </div>
                 )}
 
