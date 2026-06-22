@@ -172,7 +172,11 @@ export async function executeImport(rows: CSVRow[]) {
         slug,
         brand_id: row.Marca?.trim() ? brandMap[row.Marca.trim()] : null,
         category_id: row.Categoria?.trim() ? catMap[row.Categoria.trim()] : null,
-        active: true
+        active: true,
+        sku: `PROD-${slug}`, // FASE TEMPORAL para evitar constraint NOT NULL
+        cost: parseFloat(row.Costo) || 0,
+        price: parseFloat(row.Precio) || 0,
+        stock: parseInt(row.Stock, 10) || 0
       }
     }
   })
