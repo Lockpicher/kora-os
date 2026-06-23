@@ -398,6 +398,175 @@ export async function syncMercadoLibreListings() {
   }
 }
 
+// ==========================================
+// FASE 9A: SYNC ML METRICS
+// ==========================================
+export async function syncMLMetrics() {
+  try {
+    const supabase = await createClient()
+    const mlConnection = await getMLConnection()
+
+    if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
+      return { success: false, error: "No hay conexión a Mercado Libre." }
+    }
+
+    const { external_user_id, channel_id } = mlConnection.connection
+    const access_token = await refreshMercadoLibreToken(mlConnection.connection)
+
+    // 1. Obtener todos los IDs activos y pausados
+    const itemIds: string[] = []
+    let offset = 0
+    const limit = 50
+    let total = 1
+
+    while (offset < total) {
+      const searchRes = await fetch(
+        `https://api.mercadolibre.com/users/${external_user_id}/items/search?offset=${offset}&limit=${limit}`,
+        { headers: { Authorization: `Bearer ${access_token}` } }
+      )
+      
+      if (!searchRes.ok) throw new Error("Error fetching ML items search")
+      
+      const searchBody = await searchRes.json()
+      total = searchBody.paging?.total || 0
+      
+      if (Array.isArray(searchBody.results)) {
+        itemIds.push(...searchBody.results)
+      }
+      
+      offset += limit
+      if (itemIds.length >= total) break
+    }
+
+    if (itemIds.length === 0) {
+      return { success: true, message: "No se encontraron publicaciones.", found: 0, linked: 0, orphans: 0, errors: 0 }
+    }
+
+    // 2. Procesar detalles en lotes de 20
+    const chunkSize = 20
+    let linked = 0
+    let orphans = 0
+    let errors = 0
+
+    // Para evitar consultas 1 a 1 de channel_listings, precargamos los mappings
+    const { data: existingListings } = await supabase
+      .from("channel_listings")
+      .select("id, external_id")
+      .eq("channel_id", channel_id)
+
+    const listingMap = new Map()
+    if (existingListings) {
+      for (const l of existingListings) {
+        listingMap.set(l.external_id, l.id)
+      }
+    }
+
+    for (let i = 0; i < itemIds.length; i += chunkSize) {
+      const chunkIds = itemIds.slice(i, i + chunkSize)
+      const idsParam = chunkIds.join(",")
+
+      const itemsRes = await fetch(
+        `https://api.mercadolibre.com/items?ids=${idsParam}`,
+        { headers: { Authorization: `Bearer ${access_token}` } }
+      )
+
+      if (!itemsRes.ok) {
+        errors += chunkIds.length
+        continue
+      }
+
+      const itemsBody = await itemsRes.json()
+
+      for (const itemWrapper of itemsBody) {
+        if (itemWrapper.code !== 200) {
+          errors++
+          continue
+        }
+
+        const item = itemWrapper.body
+        
+        let channelListingId = listingMap.get(item.id)
+
+        // Huérfanos: Si no existe en channel_listings, lo creamos
+        if (!channelListingId) {
+          const { data: newListing, error: insErr } = await supabase
+            .from("channel_listings")
+            .insert({
+              channel_id: channel_id,
+              external_id: item.id,
+              channel_sku: item.seller_custom_field || null,
+              title: item.title,
+              permalink: item.permalink,
+              status: "orphan", // Marcamos como huérfano explícitamente
+              source_data: item,
+              synced_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .select("id")
+            .single()
+
+          if (newListing) {
+            channelListingId = newListing.id
+            listingMap.set(item.id, channelListingId)
+            orphans++
+          } else {
+            console.error("Error creating orphan listing", insErr)
+            errors++
+            continue
+          }
+        } else {
+          linked++
+        }
+
+        // Insertar en ml_item_metrics
+        // Nota: permalink fue agregado como requiremento extra, lo guardamos si la columna fue creada
+        // o mapeamos snapshot_date a synced_at.
+        const metricsData: Record<string, unknown> = {
+          item_id: item.id,
+          title: item.title,
+          price: item.price,
+          available_quantity: item.available_quantity,
+          sold_quantity: item.sold_quantity,
+          status: item.status,
+          listing_type: item.listing_type_id,
+          channel_listing_id: channelListingId,
+          synced_at: new Date().toISOString()
+        }
+
+        // Manejo safe por si no corrieron el patch
+        try {
+          const { error: metricErr } = await supabase
+            .from("ml_item_metrics")
+            .insert(metricsData)
+            
+          if (metricErr) {
+            // Intento fall-back agregando permalink si existe la columna
+             metricsData.permalink = item.permalink
+             await supabase.from("ml_item_metrics").insert(metricsData)
+          }
+        } catch (e) {
+           console.error("Metric insert error", e)
+           errors++
+        }
+      }
+    }
+
+    revalidatePath("/integrations/mercadolibre")
+    
+    return {
+      success: true,
+      found: itemIds.length,
+      linked,
+      orphans,
+      errors
+    }
+
+  } catch (e: unknown) {
+    console.error("Exception in syncMLMetrics:", e)
+    return { success: false, error: e instanceof Error ? e.message : "Error desconocido" }
+  }
+}
+
 export async function testUserProduct() {
   try {
     const mlConnection = await getMLConnection()
