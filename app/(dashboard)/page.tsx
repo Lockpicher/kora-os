@@ -1,259 +1,238 @@
 import { createClient } from "@/lib/supabase/server"
-import DashboardClient from "@/components/dashboard/dashboard-client"
+import DashboardClient, { MLDashboardData, MLTopProduct, MLRotationProduct, MLOpportunity } from "@/components/dashboard/dashboard-client"
 
-export const revalidate = 0 // Evita que se cacheen las estadísticas y siempre consulte a Supabase
+export const revalidate = 0
 
-export interface DashboardVariant {
-  id: string
-  sku: string
-  name: string
-  external_reference: string | null
-  stock: number
-  price: number
-  current_cost: number | null
-  product_name: string
-  utilidad: number
-  margen: number
-  valor_inventario: number
-  utilidad_potencial: number
-  status_badge: string
-}
-
-export interface DashboardMetrics {
-  total_inventory: number
-  total_value: number
-  potential_profit: number
-  purchases_month: number
-  average_cost: number
-  out_of_stock: number
+export default async function DashboardPage(props: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const searchParams = await props.searchParams;
+  const period = (searchParams.period as string) || "30d"
   
-  inventory_coverage: string
-  immobilized_capital: number
-  inventory_concentration: number
-  
-  health_total: number
-  health_no_cost: number
-  health_no_price: number
+  const dateFrom = new Date()
+  if (period === "7d") dateFrom.setDate(dateFrom.getDate() - 7)
+  else if (period === "90d") dateFrom.setDate(dateFrom.getDate() - 90)
+  else dateFrom.setDate(dateFrom.getDate() - 30) // default 30d
 
-  // Nuevas métricas Fase 8B
-  wc_orders_today: number
-  wc_sales_today: number
-  sync_errors: number
-  orphan_skus: DashboardOrphanSKU[]
-}
-
-export interface DashboardOrphanSKU {
-  id: string
-  product_id: number
-  name: string
-  url: string
-  reason: string
-  last_sale: string
-  sku?: string
-}
-
-type RawVariant = {
-  id: string
-  sku: string
-  name: string
-  external_reference: string | null
-  stock: number | null
-  price: number | null
-  current_cost: number | null
-  products: { name: string } | { name: string }[] | null
-}
-
-export default async function DashboardPage() {
   const supabase = await createClient()
 
-  // 1. Cargar Variantes Activas
-  const { data: variantsRawData, error: varError } = await supabase
+  interface MLOrderItem {
+    item_id: string
+    title: string
+    quantity: number
+    unit_price: number
+    variant_id: string | null
+  }
+
+  // 1. Fetch ML Orders
+  const { data: mlOrders } = await supabase
+    .from("ml_orders")
+    .select("id, total_amount, date_created")
+    .gte("date_created", dateFrom.toISOString())
+
+  const orderIds = mlOrders?.map(o => o.id) || []
+
+  // 2. Fetch ML Order Items for these orders
+  let mlOrderItems: MLOrderItem[] = []
+  if (orderIds.length > 0) {
+     const { data: itemsData } = await supabase
+       .from("ml_order_items")
+       .select("*")
+       .in("order_id", orderIds)
+     mlOrderItems = (itemsData || []) as MLOrderItem[]
+  }
+
+  // 3. Fetch Product Variants (active)
+  const { data: variantsData } = await supabase
     .from("product_variants")
-    .select(`
-      id,
-      sku,
-      name,
-      external_reference,
-      stock,
-      price,
-      current_cost,
-      products ( name )
-    `)
+    .select("id, sku, stock, current_cost, products(name)")
     .eq("active", true)
 
-  if (varError) {
-    console.error("Error fetching variants for dashboard:", varError)
+  const variantMap = new Map()
+  if (variantsData) {
+     variantsData.forEach(v => {
+        const prods = v.products as unknown as { name: string } | { name: string }[] | null
+        const prodName = Array.isArray(prods) ? prods[0]?.name : prods?.name
+        variantMap.set(v.id, {
+           stock: v.stock || 0,
+           cost: v.current_cost || 0,
+           name: prodName || v.sku || "N/A",
+           sku: v.sku
+        })
+     })
   }
 
-  // 2. Cargar Órdenes de Compra del Mes
-  const startOfMonth = new Date()
-  startOfMonth.setDate(1)
-  startOfMonth.setHours(0, 0, 0, 0)
+  // 4. Fetch ML Item Metrics (ALL) to deduplicate and find active & visits
+  const { data: mlMetricsData } = await supabase
+    .from("ml_item_metrics")
+    .select("item_id, status, visits, synced_at")
 
-  const { data: poData, error: poError } = await supabase
-    .from("purchase_orders")
-    .select("total")
-    .eq("status", "received")
-    .gte("created_at", startOfMonth.toISOString())
-
-  if (poError) {
-    console.error("Error fetching purchase orders for dashboard:", poError)
+  const itemMetricsMap = new Map()
+  if (mlMetricsData) {
+     mlMetricsData.forEach(m => {
+        const existing = itemMetricsMap.get(m.item_id)
+        // Guardar el más reciente
+        if (!existing || new Date(m.synced_at) > new Date(existing.synced_at)) {
+           itemMetricsMap.set(m.item_id, m)
+        }
+     })
   }
 
-  // 3. Cargar Órdenes de WooCommerce de Hoy
+  // --- CALCULATION LOGIC ---
+  const sales_30d = mlOrders?.reduce((sum, o) => sum + Number(o.total_amount), 0) || 0
+  const orders_30d = mlOrders?.length || 0
+  const avg_ticket = orders_30d > 0 ? sales_30d / orders_30d : 0
+  
+  const active_listings = Array.from(itemMetricsMap.values()).filter(x => x.status === "active").length
+
+  let units_sold = 0
+  const products_sold_set = new Set()
+  let reconciled_revenue = 0
+  let cogs = 0
+  let orphan_revenue = 0
+
+  interface MLProductStat {
+     item_id: string
+     title: string
+     qty: number
+     revenue: number
+     profit: number
+     margin: number
+     variantId: string | null
+  }
+
+  const productStats = new Map<string, MLProductStat>() // map by item_id
+
+  for (const item of mlOrderItems) {
+     units_sold += item.quantity
+     products_sold_set.add(item.item_id)
+
+     const revenue = Number(item.quantity) * Number(item.unit_price)
+
+     const existingStat = productStats.get(item.item_id) || {
+        item_id: item.item_id,
+        title: item.title,
+        qty: 0,
+        revenue: 0,
+        profit: 0,
+        margin: 0,
+        variantId: item.variant_id
+     }
+
+     existingStat.qty += item.quantity
+     existingStat.revenue += revenue
+
+     if (item.variant_id && variantMap.has(item.variant_id)) {
+        const vInfo = variantMap.get(item.variant_id)
+        const cost = Number(vInfo.cost) * item.quantity
+        reconciled_revenue += revenue
+        cogs += cost
+
+        existingStat.profit += (revenue - cost)
+     } else {
+        orphan_revenue += revenue
+     }
+
+     productStats.set(item.item_id, existingStat)
+  }
+
+  const gross_profit = reconciled_revenue - cogs
+  const gross_margin = reconciled_revenue > 0 ? (gross_profit / reconciled_revenue) * 100 : 0
+  const products_sold = products_sold_set.size
+
+  // Global Conversion
+  const total_visits = Array.from(itemMetricsMap.values()).reduce((sum, x) => sum + (x.visits || 0), 0)
+  const global_conversion = total_visits > 0 ? (units_sold / total_visits) * 100 : 0
+
+  // Lists for Tables
+  const allStats = Array.from(productStats.values())
+  allStats.forEach(s => {
+     s.margin = s.revenue > 0 ? (s.profit / s.revenue) * 100 : 0
+  })
+
+  const getVariantName = (s: MLProductStat) => {
+     if (s.variantId && variantMap.has(s.variantId)) return variantMap.get(s.variantId).name
+     return s.title || s.item_id
+  }
+  const getVariantStock = (s: MLProductStat) => {
+     if (s.variantId && variantMap.has(s.variantId)) return variantMap.get(s.variantId).stock
+     return 0
+  }
+
+  const top_by_units: MLTopProduct[] = [...allStats]
+    .sort((a,b) => b.qty - a.qty)
+    .map(s => ({ id: s.item_id, sku: s.item_id, name: getVariantName(s), qty: s.qty, revenue: s.revenue, profit: s.profit, margin: s.margin, stock: getVariantStock(s) }))
+  
+  const top_by_revenue: MLTopProduct[] = [...allStats]
+    .sort((a,b) => b.revenue - a.revenue)
+    .map(s => ({ id: s.item_id, sku: s.item_id, name: getVariantName(s), qty: s.qty, revenue: s.revenue, profit: s.profit, margin: s.margin, stock: getVariantStock(s) }))
+  
+  const top_by_profit: MLTopProduct[] = [...allStats]
+    .filter(s => s.variantId) // exclude orphans
+    .sort((a,b) => b.profit - a.profit)
+    .map(s => ({ id: s.item_id, sku: s.item_id, name: getVariantName(s), qty: s.qty, revenue: s.revenue, profit: s.profit, margin: s.margin, stock: getVariantStock(s) }))
+
+  const top_rotation: MLRotationProduct[] = top_by_units.map(s => {
+     const coverage = s.qty > 0 ? Math.round((s.stock / s.qty) * 30) : "> 90 días"
+     return { id: s.id, name: s.name, stock: s.stock, qty: s.qty, coverage }
+  })
+
+  const critical_stock: MLRotationProduct[] = top_by_units
+    .filter(s => s.stock <= 5)
+    .sort((a,b) => b.qty - a.qty)
+    .map(s => ({ id: s.id, name: s.name, stock: s.stock, qty: s.qty, coverage: "N/A" }))
+
+  // Opportunities
+  const opportunities: MLOpportunity[] = []
+  Array.from(itemMetricsMap.values()).forEach(m => {
+     const stat = productStats.get(m.item_id)
+     const sales = stat ? stat.qty : 0
+     const visits = m.visits || 0
+     const conversion = visits > 0 ? (sales / visits) * 100 : 0
+     let stock = 0
+     if (stat && stat.variantId && variantMap.has(stat.variantId)) stock = variantMap.get(stat.variantId).stock
+     const name = stat ? getVariantName(stat) : m.item_id
+     
+     let type: MLOpportunity["type"] | null = null
+     if (visits > 100 && sales === 0) type = "CRÍTICO"
+     else if (stock <= 5 && sales > 0) type = "ATENCIÓN"
+     else if (conversion > 2 && stock > 10) type = "OPORTUNIDAD"
+
+     if (type) {
+        opportunities.push({ id: m.item_id, name, visits, sales, stock, conversion, type })
+     }
+  })
+  
+  opportunities.sort((a,b) => {
+     const p = { "CRÍTICO": 1, "ATENCIÓN": 2, "OPORTUNIDAD": 3 }
+     if (p[a.type] !== p[b.type]) return p[a.type] - p[b.type]
+     return b.visits - a.visits
+  })
+
+  // WooCommerce fallback
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const { data: wcOrdersData } = await supabase.from("orders").select("total, has_sync_error").gte("created_at", today.toISOString())
+  const wc_orders_today = wcOrdersData?.length || 0
+  const wc_sales_today = wcOrdersData?.reduce((acc, curr) => acc + Number(curr.total), 0) || 0
+  const wc_sync_errors = wcOrdersData?.filter(o => o.has_sync_error).length || 0
 
-  const { data: ordersData } = await supabase
-    .from("orders")
-    .select("id, total, status, has_sync_error")
-    .gte("created_at", today.toISOString())
-
-  let wc_orders_today = 0
-  let wc_sales_today = 0
-  let sync_errors = 0
-
-  if (ordersData) {
-    wc_orders_today = ordersData.length
-    wc_sales_today = ordersData.reduce((acc, curr) => acc + Number(curr.total), 0)
-    sync_errors = ordersData.filter(o => o.has_sync_error).length
-  }
-
-  // 4. Cargar Items Huérfanos (SKUs faltantes o sin SKU)
-  const { data: orphanItemsData } = await supabase
-    .from("order_items")
-    .select("id, sync_error_reason, created_at")
-    .not("sync_error_reason", "is", null)
-    .order("created_at", { ascending: false })
-
-  const orphan_skus: DashboardOrphanSKU[] = []
-  const seenProducts = new Set<number>()
-
-  if (orphanItemsData) {
-    for (const item of orphanItemsData) {
-      try {
-        const parsed = JSON.parse(item.sync_error_reason)
-        // Group by product_id to avoid spamming the table with the same product
-        if (parsed.product_id && !seenProducts.has(parsed.product_id)) {
-          seenProducts.add(parsed.product_id)
-          orphan_skus.push({
-            id: item.id,
-            product_id: parsed.product_id,
-            name: parsed.name || "Producto desconocido",
-            url: parsed.url || "#",
-            reason: parsed.reason || "Error desconocido",
-            last_sale: item.created_at,
-            sku: parsed.sku || ""
-          })
-        }
-      } catch (e) {
-        // Ignorar items que no sean JSON (legacy)
-      }
-    }
-  }
-
-  // === Motor de Cálculo Ejecutivo ===
-
-  const variants: DashboardVariant[] = []
-  let total_inventory = 0
-  let total_value = 0
-  let potential_profit = 0
-  
-  let out_of_stock = 0
-  let immobilized_capital = 0
-  
-  let health_total = 0
-  let health_no_cost = 0
-  let health_no_price = 0
-
-  const rawData = (variantsRawData || []) as unknown as RawVariant[]
-
-  for (const v of rawData) {
-    const stock = v.stock || 0
-    const price = v.price || 0
-    const cost = v.current_cost || 0
-    
-    const utilidad = price - cost
-    const margen = price > 0 ? (utilidad / price) * 100 : 0
-    const valor_inventario = stock * cost
-    const utilidad_potencial = utilidad * stock
-
-    let status_badge = "🟢 Rentable"
-    if (cost <= 0) status_badge = "🔴 Sin costo"
-    else if (price <= 0) status_badge = "🔴 Sin precio"
-    else if (margen < 30) status_badge = "🟡 Margen bajo"
-
-    const prodName = Array.isArray(v.products) ? v.products[0]?.name : v.products?.name
-    
-    variants.push({
-      id: v.id,
-      sku: v.sku || "N/A",
-      name: v.name,
-      external_reference: v.external_reference || null,
-      stock,
-      price,
-      current_cost: v.current_cost,
-      product_name: prodName || "Desconocido",
-      utilidad,
-      margen,
-      valor_inventario,
-      utilidad_potencial,
-      status_badge
-    })
-
-    health_total++
-    if (stock <= 0) out_of_stock++
-    if (v.current_cost === null || v.current_cost <= 0) health_no_cost++
-    if (v.price === null || v.price <= 0) health_no_price++
-
-    if (stock > 0) {
-      total_inventory += stock
-      total_value += valor_inventario
-      potential_profit += utilidad_potencial
-      
-      if (utilidad_potencial <= 0) {
-        immobilized_capital += valor_inventario
-      }
-    }
-  }
-
-  const purchases_month = poData ? poData.reduce((acc, curr) => acc + Number(curr.total), 0) : 0
-  const average_cost = total_inventory > 0 ? total_value / total_inventory : 0
-
-  // Concentración de Inventario (Top 10 Valor)
-  const sortedByValue = [...variants].sort((a, b) => b.valor_inventario - a.valor_inventario)
-  const top10Value = sortedByValue.slice(0, 10).reduce((acc, curr) => acc + curr.valor_inventario, 0)
-  const inventory_concentration = total_value > 0 ? (top10Value / total_value) * 100 : 0
-
-  const metrics: DashboardMetrics = {
-    total_inventory,
-    total_value,
-    potential_profit,
-    purchases_month,
-    average_cost,
-    out_of_stock,
-    inventory_coverage: "N/A",
-    immobilized_capital,
-    inventory_concentration,
-    health_total,
-    health_no_cost,
-    health_no_price,
-    wc_orders_today,
-    wc_sales_today,
-    sync_errors,
-    orphan_skus
+  const data: MLDashboardData = {
+     sales_30d, orders_30d, avg_ticket, active_listings, units_sold, products_sold,
+     global_conversion, potential_roas: "Sin datos Ads",
+     reconciled_revenue, cogs, gross_profit, gross_margin, orphan_revenue,
+     top_by_units, top_by_revenue, top_by_profit, top_rotation, critical_stock,
+     opportunities: opportunities.slice(0,20),
+     wc_orders_today, wc_sales_today, wc_sync_errors
   }
 
   return (
-    <div className="space-y-8">
-      <div>
+    <div className="space-y-6 p-4 md:p-8 pt-6">
+      <div className="flex flex-col gap-2">
         <h2 className="text-3xl font-bold tracking-tight text-foreground">Dashboard Ejecutivo</h2>
-        <p className="text-muted-foreground mt-2">
-          Análisis de rentabilidad y salud del inventario KORA OS.
+        <p className="text-muted-foreground">
+          Inteligencia comercial KORA OS orientada a Mercado Libre.
         </p>
       </div>
-
-      <DashboardClient metrics={metrics} variants={variants} />
+      <DashboardClient data={data} />
     </div>
   )
 }

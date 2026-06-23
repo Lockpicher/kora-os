@@ -1,377 +1,411 @@
 "use client"
 
-import * as React from "react"
-import { Package, HandCoins, Vault, AlertTriangle, TrendingUp, TrendingDown, Receipt, ShieldAlert, Activity, HeartPulse, Clock } from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DashboardMetrics, DashboardVariant } from "@/app/(dashboard)/page"
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "@/components/ui/table"
+import { DollarSign, ShoppingCart, Tag, Calculator, Percent, TrendingUp, AlertTriangle, AlertCircle, ShoppingBag, PackageX } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 
-export default function DashboardClient({ metrics, variants }: { metrics: DashboardMetrics, variants: DashboardVariant[] }) {
-  // Sort for Rankings
-  const sortedByProfit = [...variants].sort((a, b) => b.utilidad_potencial - a.utilidad_potencial)
+export interface MLTopProduct {
+  id: string
+  sku: string
+  name: string
+  qty: number
+  revenue: number
+  profit: number
+  margin: number
+  stock: number
+}
+
+export interface MLRotationProduct {
+  id: string
+  name: string
+  stock: number
+  qty: number
+  coverage: number | "> 90 días" | "N/A"
+}
+
+export interface MLOpportunity {
+  id: string
+  name: string
+  visits: number
+  sales: number
+  stock: number
+  conversion: number
+  type: "CRÍTICO" | "ATENCIÓN" | "OPORTUNIDAD"
+}
+
+export interface MLDashboardData {
+  // Comerciales
+  sales_30d: number
+  orders_30d: number
+  avg_ticket: number
+  active_listings: number
+  units_sold: number
+  products_sold: number
+  global_conversion: number
+  potential_roas: string
+
+  // Rentabilidad
+  reconciled_revenue: number
+  cogs: number
+  gross_profit: number
+  gross_margin: number
+  orphan_revenue: number // Ingresos excluidos
+
+  // Tops
+  top_by_units: MLTopProduct[]
+  top_by_revenue: MLTopProduct[]
+  top_by_profit: MLTopProduct[]
+
+  // Rotación y Críticos
+  top_rotation: MLRotationProduct[]
+  critical_stock: MLRotationProduct[]
   
-  const top5 = sortedByProfit.slice(0, 5)
-  const bottom5 = sortedByProfit.slice(-5).reverse()
+  // Oportunidades
+  opportunities: MLOpportunity[]
 
-  const formatCurrency = (value: number) => {
-    return "$" + value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-  }
+  // WooCommerce Legacy
+  wc_orders_today: number
+  wc_sales_today: number
+  wc_sync_errors: number
+}
 
-  const formatPercent = (value: number) => {
-    return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "%"
-  }
-
-  const getStatusColor = (status: string) => {
-    if (status.includes("Rentable")) return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
-    if (status.includes("Margen bajo")) return "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 border-yellow-500/20"
-    if (status.includes("Sin costo") || status.includes("Sin precio")) return "bg-rose-500/10 text-rose-500 border-rose-500/20"
-    return "bg-slate-500/10 text-slate-500 border-slate-500/20"
-  }
-
-  const mainStats = [
-    {
-      title: "Valor Inventario",
-      value: formatCurrency(metrics.total_value),
-      icon: Vault,
-      description: "Capital invertido total",
-      color: "text-amber-500",
-      bg: "bg-amber-500/10",
-    },
-    {
-      title: "Utilidad Potencial",
-      value: formatCurrency(metrics.potential_profit),
-      icon: TrendingUp,
-      description: "Ganancia si se vende todo",
-      color: "text-emerald-500",
-      bg: "bg-emerald-500/10",
-    },
-    {
-      title: "Ventas Hoy (WC)",
-      value: formatCurrency(metrics.wc_sales_today),
-      icon: TrendingUp,
-      description: `${metrics.wc_orders_today} pedidos recibidos`,
-      color: "text-purple-500",
-      bg: "bg-purple-500/10",
-    },
-    {
-      title: "Compras Mes",
-      value: formatCurrency(metrics.purchases_month),
-      icon: Receipt,
-      description: "Mercadería recibida",
-      color: "text-indigo-500",
-      bg: "bg-indigo-500/10",
-    },
-    {
-      title: "Inventario Total",
-      value: metrics.total_inventory.toLocaleString(),
-      icon: Package,
-      description: "Unidades físicas",
-      color: "text-blue-500",
-      bg: "bg-blue-500/10",
-    },
-    {
-      title: "Costo Promedio",
-      value: formatCurrency(metrics.average_cost),
-      icon: HandCoins,
-      description: "Promedio ponderado",
-      color: "text-violet-500",
-      bg: "bg-violet-500/10",
-    },
-    {
-      title: "Sin Stock",
-      value: metrics.out_of_stock.toString(),
-      icon: AlertTriangle,
-      description: "Variantes agotadas",
-      color: "text-rose-500",
-      bg: "bg-rose-500/10",
-    },
-  ]
+export default function DashboardClient({ data }: { data: MLDashboardData }) {
+  const formatCur = (val: number) => "$" + val.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  const formatNum = (val: number) => val.toLocaleString("en-US")
 
   return (
     <div className="space-y-8">
-      {metrics.sync_errors > 0 && (
-        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 p-4 rounded-lg flex items-center gap-3">
-          <AlertTriangle className="h-6 w-6 shrink-0" />
-          <div>
-            <h3 className="font-bold">¡Atención! SKUs Huérfanos Detectados</h3>
-            <p className="text-sm">Existen {metrics.sync_errors} pedidos provenientes de WooCommerce que contienen productos cuyo SKU no existe en KORA. Verifica el catálogo o corrige los SKUs en tu tienda para asegurar el descuento correcto de inventario.</p>
+      
+      {/* 1. KPIs Comerciales */}
+      <div>
+        <h3 className="text-xl font-semibold mb-4 text-primary flex items-center gap-2">
+          <TrendingUp className="h-5 w-5" />
+          Métricas Comerciales (Mercado Libre)
+        </h3>
+        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">Ventas ML</CardTitle>
+              <DollarSign className="h-4 w-4 text-emerald-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{formatCur(data.sales_30d)}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">Pedidos ML</CardTitle>
+              <ShoppingCart className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{formatNum(data.orders_30d)}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">Ticket Promedio</CardTitle>
+              <Calculator className="h-4 w-4 text-purple-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{formatCur(data.avg_ticket)}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">Publicaciones Activas</CardTitle>
+              <Tag className="h-4 w-4 text-yellow-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{formatNum(data.active_listings)}</div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">Conversión Global</CardTitle>
+              <Percent className="h-4 w-4 text-emerald-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{data.global_conversion.toFixed(2)}%</div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between">
+              <CardTitle className="text-xs text-muted-foreground">ROAS Potencial</CardTitle>
+              <TrendingUp className="h-4 w-4 text-blue-400" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-xl font-bold">{data.potential_roas}</div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* 2. KPIs Rentabilidad */}
+      <div className="bg-slate-900/50 p-6 rounded-xl border border-slate-800">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-semibold text-emerald-400 flex items-center gap-2">
+            <DollarSign className="h-5 w-5" />
+            Rentabilidad Bruta (Items Conciliados)
+          </h3>
+          {data.orphan_revenue > 0 && (
+             <span className="text-xs font-medium text-rose-400 bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">
+                Ingresos excluidos por falta de conciliación: {formatCur(data.orphan_revenue)}
+             </span>
+          )}
+        </div>
+        <div className="grid gap-4 md:grid-cols-4">
+          <div className="space-y-1">
+             <p className="text-sm text-muted-foreground">Ingresos Conciliados</p>
+             <p className="text-2xl font-bold text-white">{formatCur(data.reconciled_revenue)}</p>
+          </div>
+          <div className="space-y-1">
+             <p className="text-sm text-muted-foreground">Costo de Ventas (COGS)</p>
+             <p className="text-2xl font-bold text-rose-400">{formatCur(data.cogs)}</p>
+          </div>
+          <div className="space-y-1 border-l border-slate-700 pl-4">
+             <p className="text-sm text-muted-foreground">Utilidad Bruta</p>
+             <p className="text-3xl font-bold text-emerald-500">{formatCur(data.gross_profit)}</p>
+          </div>
+          <div className="space-y-1">
+             <p className="text-sm text-muted-foreground">Margen Bruto</p>
+             <p className="text-3xl font-bold text-emerald-400">{data.gross_margin.toFixed(1)}%</p>
           </div>
         </div>
-      )}
-
-      {/* 1. Widgets Ejecutivos Principales */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
-        {mainStats.map((stat) => {
-          const Icon = stat.icon
-          return (
-            <Card key={stat.title} className="hover:border-primary/50 transition-colors duration-200">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-xs font-medium text-muted-foreground whitespace-nowrap">
-                  {stat.title}
-                </CardTitle>
-                <div className={`${stat.bg} p-2 rounded-md shrink-0`}>
-                  <Icon className={`h-4 w-4 ${stat.color}`} />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="text-xl md:text-2xl font-bold text-foreground truncate" title={stat.value}>{stat.value}</div>
-                <div className="text-xs text-muted-foreground mt-1 truncate">{stat.description}</div>
-              </CardContent>
-            </Card>
-          )
-        })}
       </div>
 
-      {/* 2. Riesgo y Salud del Catálogo */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-card border-border border-l-4 border-l-rose-500">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Capital Inmovilizado</CardTitle>
-            <ShieldAlert className="h-4 w-4 text-rose-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-rose-600 dark:text-rose-400">{formatCurrency(metrics.immobilized_capital)}</div>
-            <div className="text-xs text-muted-foreground mt-1">Stock &gt; 0 sin utilidad</div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-border border-l-4 border-l-amber-500">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Concentración de Riesgo</CardTitle>
-            <Activity className="h-4 w-4 text-amber-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">{formatPercent(metrics.inventory_concentration)}</div>
-            <div className="text-xs text-muted-foreground mt-1">Valor en Top 10 SKU vs Total</div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-border border-l-4 border-l-blue-500">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Cobertura de Inventario</CardTitle>
-            <Clock className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-foreground">{metrics.inventory_coverage}</div>
-            <div className="text-xs text-muted-foreground mt-1">Meses de stock restante</div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-border border-l-4 border-l-emerald-500">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-xs font-medium text-muted-foreground">Salud del Catálogo</CardTitle>
-            <HeartPulse className="h-4 w-4 text-emerald-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="flex justify-between"><span className="text-muted-foreground">Total Variantes:</span> <span className="font-medium text-foreground">{metrics.health_total}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Sin Stock:</span> <span className="font-medium text-rose-500">{metrics.out_of_stock}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Sin Costo:</span> <span className="font-medium text-rose-500">{metrics.health_no_cost}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Sin Precio:</span> <span className="font-medium text-rose-500">{metrics.health_no_price}</span></div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabla de Productos sin SKU o Huérfanos */}
-      {metrics.orphan_skus && metrics.orphan_skus.length > 0 && (
-        <Card className="bg-card border-rose-500/30">
+      {/* 3. Top Productos */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
-              <AlertTriangle className="h-5 w-5" /> Productos WooCommerce sin SKU
-            </CardTitle>
-            <CardDescription>
-              Estos productos se han vendido recientemente pero no tienen un SKU válido en WooCommerce o no coinciden con KORA.
-            </CardDescription>
+             <CardTitle className="text-sm">Top 20 por Unidades</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="border border-border rounded-lg overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product ID</TableHead>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Problema</TableHead>
-                    <TableHead>SKU Recibido</TableHead>
-                    <TableHead>Fecha Última Venta</TableHead>
-                    <TableHead className="text-right">Acción</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {metrics.orphan_skus.map((orphan) => (
-                    <TableRow key={orphan.id}>
-                      <TableCell className="font-mono text-sm">{orphan.product_id}</TableCell>
-                      <TableCell className="font-medium text-foreground">{orphan.name}</TableCell>
-                      <TableCell>
-                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border bg-rose-500/10 text-rose-600 border-rose-500/20">
-                          {orphan.reason}
-                        </span>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {orphan.sku || <span className="italic">Vacio / Nulo</span>}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {new Date(orphan.last_sale).toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-3">
-                          <a 
-                            href={`/products?search=${encodeURIComponent(orphan.sku || orphan.name)}`}
-                            className="text-sm text-amber-600 dark:text-amber-500 hover:underline font-medium whitespace-nowrap"
-                          >
-                            Ver sugerencia
-                          </a>
-                          <a 
-                            href={orphan.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-sm text-primary hover:underline font-medium whitespace-nowrap"
-                          >
-                            Corregir en WC
-                          </a>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* 3. Rankings Top / Bottom */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card className="bg-card border-border">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-emerald-500" /> Top 5 Mayor Rentabilidad
-            </CardTitle>
-            <CardDescription>Generadores de la mayor utilidad potencial.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {top5.map((v, i) => (
-                <div key={v.id} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3 truncate mr-4">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500 font-bold text-xs shrink-0">
-                      {i + 1}
-                    </div>
-                    <div className="truncate">
-                      <p className="text-sm font-medium leading-none truncate">{v.product_name} - {v.name}</p>
-                      <p className="text-xs text-muted-foreground truncate mt-1">Stock: {v.stock} | Margen: {formatPercent(v.margen)}</p>
-                    </div>
-                  </div>
-                  <div className="font-bold text-sm text-emerald-600 dark:text-emerald-400 shrink-0">
-                    {formatCurrency(v.utilidad_potencial)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-card border-border">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingDown className="h-5 w-5 text-rose-500" /> Bottom 5 Menor Rentabilidad
-            </CardTitle>
-            <CardDescription>Productos que consumen capital con menor utilidad.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {bottom5.map((v, i) => (
-                <div key={v.id} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3 truncate mr-4">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/10 text-rose-500 font-bold text-xs shrink-0">
-                      {variants.length - i}
-                    </div>
-                    <div className="truncate">
-                      <p className="text-sm font-medium leading-none truncate">{v.product_name} - {v.name}</p>
-                      <p className="text-xs text-muted-foreground truncate mt-1">Stock: {v.stock} | Margen: {formatPercent(v.margen)}</p>
-                    </div>
-                  </div>
-                  <div className="font-bold text-sm text-rose-600 dark:text-rose-400 shrink-0">
-                    {formatCurrency(v.utilidad_potencial)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* 4. Tabla Principal */}
-      <Card className="bg-card border-border">
-        <CardHeader>
-          <CardTitle>Rentabilidad de Inventario (Catálogo Completo)</CardTitle>
-          <CardDescription>
-            Análisis detallado de costos, precios, utilidad y valorización por SKU.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="border border-border rounded-lg overflow-x-auto">
+          <CardContent className="p-0">
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[120px]">SKU / Ref</TableHead>
-                  <TableHead className="min-w-[200px]">Producto</TableHead>
-                  <TableHead className="text-center">Estado</TableHead>
-                  <TableHead className="text-right">Costo</TableHead>
-                  <TableHead className="text-right">Precio</TableHead>
-                  <TableHead className="text-right">Utilidad</TableHead>
-                  <TableHead className="text-right">Margen %</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Valor Inv.</TableHead>
-                  <TableHead className="text-right font-bold">Util. Potencial</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {sortedByProfit.map((v) => (
-                  <TableRow key={v.id}>
-                    <TableCell>
-                      <p className="font-mono text-sm font-medium">{v.sku}</p>
-                      {v.external_reference && (
-                        <p className="text-xs text-muted-foreground mt-0.5" title="Referencia Externa / MLA">
-                          Ext: {v.external_reference}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <p className="font-medium text-foreground">{v.product_name}</p>
-                      <p className="text-xs text-muted-foreground">{v.name}</p>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border ${getStatusColor(v.status_badge)}`}>
-                        {v.status_badge}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">{formatCurrency(v.current_cost || 0)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(v.price)}</TableCell>
-                    <TableCell className="text-right text-emerald-600 dark:text-emerald-400 font-medium">
-                      {formatCurrency(v.utilidad)}
-                    </TableCell>
-                    <TableCell className="text-right">{formatPercent(v.margen)}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {v.stock <= 0 ? (
-                        <span className="text-destructive">0</span>
-                      ) : (
-                        v.stock
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right text-amber-600 dark:text-amber-400">
-                      {formatCurrency(v.valor_inventario)}
-                    </TableCell>
-                    <TableCell className="text-right font-bold text-foreground">
-                      {formatCurrency(v.utilidad_potencial)}
-                    </TableCell>
+               <TableHeader>
+                  <TableRow>
+                     <TableHead>Producto</TableHead>
+                     <TableHead className="text-right">Unds</TableHead>
+                     <TableHead className="text-right">Utilidad</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
+               </TableHeader>
+               <TableBody>
+                  {data.top_by_units.slice(0,10).map(p => (
+                     <TableRow key={p.id}>
+                        <TableCell className="text-xs font-medium max-w-[120px] truncate" title={p.name}>{p.name}</TableCell>
+                        <TableCell className="text-right font-bold text-blue-500">{formatNum(p.qty)}</TableCell>
+                        <TableCell className="text-right text-xs">{formatCur(p.profit)}</TableCell>
+                     </TableRow>
+                  ))}
+               </TableBody>
             </Table>
-          </div>
-        </CardContent>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+             <CardTitle className="text-sm">Top 20 por Ingresos</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+               <TableHeader>
+                  <TableRow>
+                     <TableHead>Producto</TableHead>
+                     <TableHead className="text-right">Ingresos</TableHead>
+                     <TableHead className="text-right">Margen</TableHead>
+                  </TableRow>
+               </TableHeader>
+               <TableBody>
+                  {data.top_by_revenue.slice(0,10).map(p => (
+                     <TableRow key={p.id}>
+                        <TableCell className="text-xs font-medium max-w-[120px] truncate" title={p.name}>{p.name}</TableCell>
+                        <TableCell className="text-right font-bold text-emerald-500">{formatCur(p.revenue)}</TableCell>
+                        <TableCell className="text-right text-xs">{p.margin.toFixed(1)}%</TableCell>
+                     </TableRow>
+                  ))}
+               </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+             <CardTitle className="text-sm">Top 20 por Utilidad</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+               <TableHeader>
+                  <TableRow>
+                     <TableHead>Producto</TableHead>
+                     <TableHead className="text-right">Utilidad</TableHead>
+                     <TableHead className="text-right">Margen</TableHead>
+                  </TableRow>
+               </TableHeader>
+               <TableBody>
+                  {data.top_by_profit.slice(0,10).map(p => (
+                     <TableRow key={p.id}>
+                        <TableCell className="text-xs font-medium max-w-[120px] truncate" title={p.name}>{p.name}</TableCell>
+                        <TableCell className="text-right font-bold text-emerald-400">{formatCur(p.profit)}</TableCell>
+                        <TableCell className="text-right text-xs">{p.margin.toFixed(1)}%</TableCell>
+                     </TableRow>
+                  ))}
+               </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* 4. Rotación y Críticos */}
+      <div className="grid gap-6 lg:grid-cols-2">
+         <Card>
+            <CardHeader>
+               <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-blue-500" />
+                  Mayor Rotación
+               </CardTitle>
+            </CardHeader>
+            <CardContent>
+               <Table>
+                  <TableHeader>
+                     <TableRow>
+                        <TableHead>Producto</TableHead>
+                        <TableHead className="text-right">Ventas</TableHead>
+                        <TableHead className="text-right">Stock</TableHead>
+                        <TableHead className="text-right">Cobertura</TableHead>
+                     </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                     {data.top_rotation.slice(0,10).map(p => (
+                        <TableRow key={p.id}>
+                           <TableCell className="text-xs font-medium max-w-[150px] truncate">{p.name}</TableCell>
+                           <TableCell className="text-right">{p.qty}</TableCell>
+                           <TableCell className="text-right font-mono">{p.stock}</TableCell>
+                           <TableCell className="text-right text-xs font-medium">
+                              {typeof p.coverage === 'number' ? `${p.coverage} días` : p.coverage}
+                           </TableCell>
+                        </TableRow>
+                     ))}
+                  </TableBody>
+               </Table>
+            </CardContent>
+         </Card>
+
+         <Card>
+            <CardHeader>
+               <CardTitle className="flex items-center gap-2 text-rose-500">
+                  <AlertTriangle className="h-5 w-5" />
+                  Productos Críticos (Stock {'<='} 5)
+               </CardTitle>
+            </CardHeader>
+            <CardContent>
+               <Table>
+                  <TableHeader>
+                     <TableRow>
+                        <TableHead>Producto</TableHead>
+                        <TableHead className="text-right">Ventas</TableHead>
+                        <TableHead className="text-right">Stock Actual</TableHead>
+                     </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                     {data.critical_stock.slice(0,10).map(p => (
+                        <TableRow key={p.id}>
+                           <TableCell className="text-xs font-medium max-w-[150px] truncate">{p.name}</TableCell>
+                           <TableCell className="text-right">{p.qty}</TableCell>
+                           <TableCell className="text-right font-bold text-rose-500">{p.stock}</TableCell>
+                        </TableRow>
+                     ))}
+                  </TableBody>
+               </Table>
+            </CardContent>
+         </Card>
+      </div>
+
+      {/* 5. Oportunidades Estratégicas */}
+      <Card>
+         <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+               <AlertCircle className="h-5 w-5 text-amber-500" />
+               Matriz de Oportunidades (Mercado Libre)
+            </CardTitle>
+         </CardHeader>
+         <CardContent>
+            <div className="border rounded-md overflow-hidden">
+               <Table>
+                  <TableHeader>
+                     <TableRow>
+                        <TableHead>Estado</TableHead>
+                        <TableHead>Publicación</TableHead>
+                        <TableHead className="text-right">Visitas</TableHead>
+                        <TableHead className="text-right">Ventas</TableHead>
+                        <TableHead className="text-right">Conversión</TableHead>
+                        <TableHead className="text-right">Stock</TableHead>
+                     </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                     {data.opportunities.map(p => (
+                        <TableRow key={p.id}>
+                           <TableCell>
+                              {p.type === "CRÍTICO" && <Badge variant="destructive" className="bg-rose-500">Crítico</Badge>}
+                              {p.type === "ATENCIÓN" && <Badge variant="outline" className="border-amber-500 text-amber-500">Atención</Badge>}
+                              {p.type === "OPORTUNIDAD" && <Badge variant="outline" className="border-emerald-500 text-emerald-500">Oportunidad</Badge>}
+                           </TableCell>
+                           <TableCell className="text-xs font-medium max-w-[200px] truncate" title={p.name}>{p.name}</TableCell>
+                           <TableCell className="text-right font-mono">{formatNum(p.visits)}</TableCell>
+                           <TableCell className="text-right font-mono">{formatNum(p.sales)}</TableCell>
+                           <TableCell className="text-right font-mono">{p.conversion.toFixed(1)}%</TableCell>
+                           <TableCell className="text-right font-mono">{p.stock}</TableCell>
+                        </TableRow>
+                     ))}
+                  </TableBody>
+               </Table>
+            </div>
+         </CardContent>
       </Card>
+
+      {/* 6. Módulo Secundario WooCommerce */}
+      <div className="pt-8 mt-8 border-t border-border">
+         <h3 className="text-lg font-semibold text-muted-foreground mb-4 flex items-center gap-2">
+            <ShoppingBag className="h-5 w-5" />
+            Canal Secundario: WooCommerce
+         </h3>
+         <div className="grid gap-4 md:grid-cols-3">
+            <Card>
+               <CardHeader className="pb-2">
+                  <CardTitle className="text-xs text-muted-foreground">Ventas Hoy (WC)</CardTitle>
+               </CardHeader>
+               <CardContent>
+                  <div className="text-xl font-bold">{formatCur(data.wc_sales_today)}</div>
+               </CardContent>
+            </Card>
+            <Card>
+               <CardHeader className="pb-2">
+                  <CardTitle className="text-xs text-muted-foreground">Pedidos Hoy (WC)</CardTitle>
+               </CardHeader>
+               <CardContent>
+                  <div className="text-xl font-bold">{formatNum(data.wc_orders_today)}</div>
+               </CardContent>
+            </Card>
+            <Card>
+               <CardHeader className="pb-2">
+                  <CardTitle className="text-xs text-muted-foreground flex items-center gap-1">
+                     <PackageX className="h-3 w-3" />
+                     Errores Sincronización (WC)
+                  </CardTitle>
+               </CardHeader>
+               <CardContent>
+                  <div className={`text-xl font-bold ${data.wc_sync_errors > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                     {formatNum(data.wc_sync_errors)}
+                  </div>
+               </CardContent>
+            </Card>
+         </div>
+      </div>
+
     </div>
   )
 }
