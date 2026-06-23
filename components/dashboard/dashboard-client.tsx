@@ -46,6 +46,14 @@ export default function DashboardClient({ metrics, variants }: { metrics: Dashbo
       bg: "bg-emerald-500/10",
     },
     {
+      title: "Ventas Hoy (WC)",
+      value: formatCurrency(metrics.wc_sales_today),
+      icon: TrendingUp,
+      description: `${metrics.wc_orders_today} pedidos recibidos`,
+      color: "text-purple-500",
+      bg: "bg-purple-500/10",
+    },
+    {
       title: "Compras Mes",
       value: formatCurrency(metrics.purchases_month),
       icon: Receipt,
@@ -81,8 +89,18 @@ export default function DashboardClient({ metrics, variants }: { metrics: Dashbo
 
   return (
     <div className="space-y-8">
+      {metrics.sync_errors > 0 && (
+        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 p-4 rounded-lg flex items-center gap-3">
+          <AlertTriangle className="h-6 w-6 shrink-0" />
+          <div>
+            <h3 className="font-bold">¡Atención! SKUs Huérfanos Detectados</h3>
+            <p className="text-sm">Existen {metrics.sync_errors} pedidos provenientes de WooCommerce que contienen productos cuyo SKU no existe en KORA. Verifica el catálogo o corrige los SKUs en tu tienda para asegurar el descuento correcto de inventario.</p>
+          </div>
+        </div>
+      )}
+
       {/* 1. Widgets Ejecutivos Principales */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7">
         {mainStats.map((stat) => {
           const Icon = stat.icon
           return (

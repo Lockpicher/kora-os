@@ -34,6 +34,11 @@ export interface DashboardMetrics {
   health_total: number
   health_no_cost: number
   health_no_price: number
+
+  // Nuevas métricas Fase 8B
+  wc_orders_today: number
+  wc_sales_today: number
+  sync_errors: number
 }
 
 type RawVariant = {
@@ -82,6 +87,25 @@ export default async function DashboardPage() {
 
   if (poError) {
     console.error("Error fetching purchase orders for dashboard:", poError)
+  }
+
+  // 3. Cargar Órdenes de WooCommerce de Hoy
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  const { data: ordersData } = await supabase
+    .from("orders")
+    .select("id, total, status, has_sync_error")
+    .gte("created_at", today.toISOString())
+
+  let wc_orders_today = 0
+  let wc_sales_today = 0
+  let sync_errors = 0
+
+  if (ordersData) {
+    wc_orders_today = ordersData.length
+    wc_sales_today = ordersData.reduce((acc, curr) => acc + Number(curr.total), 0)
+    sync_errors = ordersData.filter(o => o.has_sync_error).length
   }
 
   // === Motor de Cálculo Ejecutivo ===
@@ -169,7 +193,10 @@ export default async function DashboardPage() {
     inventory_concentration,
     health_total,
     health_no_cost,
-    health_no_price
+    health_no_price,
+    wc_orders_today,
+    wc_sales_today,
+    sync_errors
   }
 
   return (
