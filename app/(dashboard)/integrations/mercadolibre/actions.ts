@@ -732,3 +732,197 @@ export async function syncMLOrders() {
     return { success: false, error: e instanceof Error ? e.message : "Error desconocido" }
   }
 }
+
+// ==========================================
+// FASE 9B.1: SMART RECONCILIATION
+// ==========================================
+
+function levenshtein(a: string, b: string): number {
+  if (a.length === 0) return b.length
+  if (b.length === 0) return a.length
+  const matrix = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0))
+  for (let i = 0; i <= a.length; i++) matrix[i][0] = i
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost)
+    }
+  }
+  return matrix[a.length][b.length]
+}
+
+function textSimilarity(str1: string, str2: string): number {
+  if (!str1 || !str2) return 0
+  const a = str1.toLowerCase().trim()
+  const b = str2.toLowerCase().trim()
+  if (a === b) return 100
+  const dist = levenshtein(a, b)
+  const maxLen = Math.max(a.length, b.length)
+  return Math.max(0, 100 - (dist / maxLen) * 100)
+}
+
+function jaccardSimilarity(str1: string, str2: string): number {
+  if (!str1 || !str2) return 0
+  const aTokens = new Set(str1.toLowerCase().replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(x => x.length > 2))
+  const bTokens = new Set(str2.toLowerCase().replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(x => x.length > 2))
+  if (aTokens.size === 0 && bTokens.size === 0) return 0
+  let intersection = 0
+  for (const t of aTokens) {
+    if (bTokens.has(t)) intersection++
+  }
+  const union = aTokens.size + bTokens.size - intersection
+  return union === 0 ? 0 : (intersection / union) * 100
+}
+
+export async function runSmartReconciliation({ dryRun = true }: { dryRun?: boolean }) {
+  try {
+    const supabase = await createClient()
+    const mlConnection = await getMLConnection()
+
+    if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
+      return { success: false, error: "No hay conexión a Mercado Libre." }
+    }
+
+    const { channel_id } = mlConnection.connection
+
+    // 1. Obtener listings huérfanos
+    const { data: listings } = await supabase
+      .from("channel_listings")
+      .select("id, external_id, channel_sku, title, source_data, price")
+      .eq("channel_id", channel_id)
+      .is("variant_id", null)
+
+    if (!listings || listings.length === 0) {
+      return { success: true, message: "No hay publicaciones huérfanas pendientes.", stats: { total: 0, autoLink: 0, suggestions: 0, noMatch: 0 } }
+    }
+
+    // 2. Obtener TODAS las variantes de KORA activas (y el nombre de su producto y categoría si existe)
+    const { data: variants } = await supabase
+      .from("product_variants")
+      .select(`
+        id, sku, price,
+        products ( name, categories ( name ) )
+      `)
+      .eq("active", true)
+
+    if (!variants || variants.length === 0) {
+      return { success: false, error: "No hay variantes en KORA para enlazar." }
+    }
+
+    let autoLink = 0
+    let suggestions = 0
+    let noMatch = 0
+
+    const updates: Promise<unknown>[] = []
+
+    for (const l of listings) {
+      const mlTitle = String(l.title || "")
+      const mlSku = String(l.channel_sku || "")
+      const mlPrice = Number(l.price || (l.source_data as Record<string, unknown>)?.price || 0)
+      const mlDomain = String((l.source_data as Record<string, unknown>)?.domain_id || "") // Ej: MCO-BRACELETS
+
+      let bestMatch = null
+      let bestScore = -1
+      let bestDetails = null
+
+      for (const v of variants) {
+        const prods = v.products as unknown as { name?: string, categories?: { name?: string } } | Array<{ name?: string, categories?: { name?: string } }> | null
+        const prodName = Array.isArray(prods) ? prods[0]?.name : prods?.name
+        const catName = Array.isArray(prods) ? prods[0]?.categories?.name : prods?.categories?.name
+        
+        const koraName = String(prodName || v.sku || "")
+        const koraSku = String(v.sku || "")
+        const koraPrice = Number(v.price || 0)
+        const koraCategory = String(catName || "")
+
+        // Name Score (50%) - Hybrid Levenshtein + Jaccard
+        const simLev = textSimilarity(mlTitle, koraName)
+        const simJac = jaccardSimilarity(mlTitle, koraName)
+        const nameScore = (simLev + simJac) / 2
+
+        // SKU Score (20%)
+        const skuScore = textSimilarity(mlSku, koraSku)
+
+        // Category Score (15%) - Fuzzy match of domain vs category
+        let catScore = 100 // default if we can't reliably compare
+        if (koraCategory && mlDomain) {
+           const normDomain = mlDomain.split("-").pop() || mlDomain
+           catScore = textSimilarity(normDomain, koraCategory) > 50 || jaccardSimilarity(normDomain, koraCategory) > 10 ? 100 : 0
+        }
+
+        // Price Score (15%) - Tolerance ±20%
+        let priceScore = 0
+        if (mlPrice > 0 && koraPrice > 0) {
+           const priceDiff = Math.abs(mlPrice - koraPrice) / Math.max(mlPrice, koraPrice)
+           if (priceDiff <= 0.20) priceScore = 100
+           else priceScore = Math.max(0, 100 - ((priceDiff - 0.20) * 100 * 2))
+        } else {
+           priceScore = 50 // Si falta precio en alguno, score neutro
+        }
+
+        const finalScore = (nameScore * 0.50) + (skuScore * 0.20) + (catScore * 0.15) + (priceScore * 0.15)
+
+        if (finalScore > bestScore) {
+           bestScore = finalScore
+           bestMatch = v
+           bestDetails = { name: Math.round(nameScore), sku: Math.round(skuScore), category: Math.round(catScore), price: Math.round(priceScore) }
+        }
+      }
+
+      if (bestMatch && bestScore >= 85) {
+        const confidence = Math.round(bestScore * 100) / 100
+        const bmProds = bestMatch.products as unknown as { name?: string } | Array<{ name?: string }> | null
+        const variantName = Array.isArray(bmProds) ? bmProds[0]?.name : bmProds?.name
+
+        if (confidence >= 98) {
+           autoLink++
+           if (!dryRun) {
+              updates.push(
+                supabase.from("channel_listings").update({ variant_id: bestMatch.id }).eq("id", l.id) as unknown as Promise<unknown>
+              )
+           }
+        } else {
+           suggestions++
+           if (!dryRun) {
+              updates.push(
+                supabase.from("reconciliation_suggestions").insert({
+                   listing_id: l.id,
+                   variant_id: bestMatch.id,
+                   listing_title: l.title,
+                   variant_name: variantName || bestMatch.sku,
+                   confidence: confidence,
+                   confidence_reason: bestDetails,
+                   status: "pending"
+                }) as unknown as Promise<unknown>
+              )
+           }
+        }
+      } else {
+        noMatch++
+      }
+    }
+
+    if (!dryRun && updates.length > 0) {
+       // Ejecutar en lotes para evitar timeout si son muchos
+       for (let i = 0; i < updates.length; i += 50) {
+          await Promise.all(updates.slice(i, i + 50))
+       }
+    }
+
+    return {
+       success: true,
+       mode: dryRun ? "DRY RUN" : "LIVE",
+       stats: {
+          total: listings.length,
+          autoLink,
+          suggestions,
+          noMatch
+       }
+    }
+
+  } catch (e: unknown) {
+    console.error("Exception in Smart Reconciliation:", e)
+    return { success: false, error: e instanceof Error ? e.message : "Error desconocido" }
+  }
+}

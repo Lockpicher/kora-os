@@ -7,6 +7,7 @@ import SyncButton from "@/components/mercadolibre/sync-button"
 import DisconnectButton from "@/components/mercadolibre/disconnect-button"
 import SyncMetricsButton from "@/components/mercadolibre/sync-metrics-button"
 import SyncOrdersButton from "@/components/mercadolibre/sync-orders-button"
+import SmartMatchButton from "@/components/mercadolibre/smart-match-button"
 import Link from "next/link"
 import { BarChart3 } from "lucide-react"
 
@@ -85,6 +86,7 @@ export default async function MercadoLibrePage(
               <SyncOrdersButton />
               <SyncMetricsButton />
               <SyncButton />
+              <SmartMatchButton />
               <DisconnectButton connectionId={connection.id} />
             </>
           ) : (
