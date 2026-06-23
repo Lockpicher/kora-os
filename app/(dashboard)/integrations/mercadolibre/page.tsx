@@ -8,6 +8,7 @@ import DisconnectButton from "@/components/mercadolibre/disconnect-button"
 import SyncMetricsButton from "@/components/mercadolibre/sync-metrics-button"
 import SyncOrdersButton from "@/components/mercadolibre/sync-orders-button"
 import Link from "next/link"
+import { BarChart3 } from "lucide-react"
 
 export const metadata = {
   title: "Mercado Libre | KORA OS",
@@ -74,6 +75,11 @@ export default async function MercadoLibrePage(
               <Button asChild variant="outline" className="gap-2">
                 <Link href="/api/ml/auth">
                   <LinkIcon className="h-4 w-4" /> Reconectar Cuenta
+                </Link>
+              </Button>
+              <Button asChild variant="default" className="gap-2 bg-blue-600 hover:bg-blue-700 text-white">
+                <Link href="/integrations/mercadolibre/analytics">
+                  <BarChart3 className="h-4 w-4" /> Analytics
                 </Link>
               </Button>
               <SyncOrdersButton />
