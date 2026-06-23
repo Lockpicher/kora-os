@@ -158,26 +158,8 @@ export async function syncProductToWooCommerce(productId: string) {
     .eq("product_id", productId)
     .eq("active", true)
 
-  if (!variants || variants.length === 0) {
-    const totalFound = diagVariants?.length || 0
-    const activeFound = variants?.length || 0
-    const details = diagVariants?.map(v => `ID: ${v.id}, Active: ${v.active}`).join(" | ") || "Ninguna variante asociada al producto"
-    
-    console.log("=== DIAGNÓSTICO WOOCOMMERCE PUBLISH ===")
-    console.log(`Product ID: ${productId}`)
-    console.log(`Variantes Totales: ${totalFound}`)
-    console.log(`Variantes Activas: ${activeFound}`)
-    console.log(`Detalle: ${details}`)
-    console.log("======================================")
-
-    return { 
-      success: false, 
-      error: `El producto no tiene variantes activas para publicar. Diagnóstico: Totales (${totalFound}), Activas (${activeFound}). Detalle: ${details}` 
-    }
-  }
-
-  // 4. Determinar tipo y preparar payload base
-  const isSimple = variants.length === 1
+  const isLegacySimple = !variants || variants.length === 0
+  const isSimple = isLegacySimple || variants.length === 1
   const categories = product.categories ? [{ name: (product.categories as any).name }] : []
   // WC usa name para categories o se debe enviar ID, si se envía solo nombre no siempre lo enlaza si no existe,
   // Pero lo ideal es crear las tags o manejar el category en WC. Asumiremos por ahora el name.
@@ -194,13 +176,23 @@ export async function syncProductToWooCommerce(productId: string) {
   }
 
   if (isSimple) {
-    const v = variants[0]
-    basePayload.regular_price = v.price ? v.price.toString() : "0"
-    basePayload.sku = v.sku
-    basePayload.manage_stock = true
-    basePayload.stock_quantity = v.stock || 0
-    if (v.image_url) {
-      basePayload.images = [{ src: v.image_url }]
+    if (isLegacySimple) {
+      basePayload.regular_price = (product as any).price ? (product as any).price.toString() : "0"
+      basePayload.sku = (product as any).sku || `PROD-${product.slug || productId.substring(0, 6)}`
+      basePayload.manage_stock = true
+      basePayload.stock_quantity = (product as any).stock || 0
+      if ((product as any).image_url) {
+        basePayload.images = [{ src: (product as any).image_url }]
+      }
+    } else {
+      const v = variants[0]
+      basePayload.regular_price = v.price ? v.price.toString() : "0"
+      basePayload.sku = v.sku
+      basePayload.manage_stock = true
+      basePayload.stock_quantity = v.stock || 0
+      if (v.image_url) {
+        basePayload.images = [{ src: v.image_url }]
+      }
     }
   } else {
     // Es Variable. Necesita un atributo para las variaciones.
@@ -215,13 +207,24 @@ export async function syncProductToWooCommerce(productId: string) {
     ]
   }
 
-  // Verificar si ya existe en channel_listings para saber si es POST o PUT
-  // Solo buscaremos el listing de la primera variante para saber si el padre existe
-  const { data: existingListings } = await supabase
-    .from("channel_listings")
-    .select("*")
-    .eq("channel_id", channelId)
-    .in("variant_id", variants.map(v => v.id))
+  const variantsIds = variants ? variants.map(v => v.id) : []
+  let existingListings: any[] = []
+  
+  if (isLegacySimple) {
+    const { data: prodListings } = await supabase
+      .from("channel_listings")
+      .select("*")
+      .eq("channel_id", channelId)
+      .eq("user_product_id", productId)
+    existingListings = prodListings || []
+  } else {
+    const { data: varListings } = await supabase
+      .from("channel_listings")
+      .select("*")
+      .eq("channel_id", channelId)
+      .in("variant_id", variantsIds)
+    existingListings = varListings || []
+  }
 
   // Si existe un listing, tomamos el product_id de WooCommerce del source_data
   let wooProductId = null
@@ -253,14 +256,18 @@ export async function syncProductToWooCommerce(productId: string) {
 
     // Si es Simple, guardamos/actualizamos su único listing y terminamos
     if (isSimple) {
-      const v = variants[0]
       const sourceData = {
         woocommerce_product_id: wooProduct.id,
         woocommerce_variation_id: null,
         woocommerce_permalink: wooProduct.permalink
       }
       
-      const existing = existingListings?.find(l => l.variant_id === v.id)
+      let existing
+      if (isLegacySimple) {
+        existing = existingListings?.find(l => l.user_product_id === productId)
+      } else {
+        existing = existingListings?.find(l => l.variant_id === variants[0].id)
+      }
       
       if (existing) {
         await supabase.from("channel_listings").update({
@@ -271,14 +278,19 @@ export async function syncProductToWooCommerce(productId: string) {
           synced_at: new Date().toISOString()
         }).eq("id", existing.id)
       } else {
-        await supabase.from("channel_listings").insert({
-          variant_id: v.id,
+        const insertData: any = {
           channel_id: channelId,
           external_id: wooProduct.id.toString(),
           permalink: wooProduct.permalink,
           status: wooProduct.status,
           source_data: sourceData
-        })
+        }
+        if (isLegacySimple) {
+          insertData.user_product_id = productId
+        } else {
+          insertData.variant_id = variants[0].id
+        }
+        await supabase.from("channel_listings").insert(insertData)
       }
 
     } else {
@@ -365,15 +377,27 @@ export async function getWooCommerceListingStatus(productId: string) {
 
   // Encontrar variantes del producto
   const { data: variants } = await supabase.from("product_variants").select("id").eq("product_id", productId)
-  if (!variants || variants.length === 0) return { isPublished: false, permalink: null }
+  const isLegacySimple = !variants || variants.length === 0
 
   // Buscar listings
-  const { data: listings } = await supabase.from("channel_listings")
-    .select("permalink")
-    .eq("channel_id", channel.id)
-    .in("variant_id", variants.map(v => v.id))
-    .not("permalink", "is", null)
-    .limit(1)
+  let listings = []
+  if (isLegacySimple) {
+    const { data: prodListings } = await supabase.from("channel_listings")
+      .select("permalink")
+      .eq("channel_id", channel.id)
+      .eq("user_product_id", productId)
+      .not("permalink", "is", null)
+      .limit(1)
+    listings = prodListings || []
+  } else {
+    const { data: varListings } = await supabase.from("channel_listings")
+      .select("permalink")
+      .eq("channel_id", channel.id)
+      .in("variant_id", variants.map(v => v.id))
+      .not("permalink", "is", null)
+      .limit(1)
+    listings = varListings || []
+  }
 
   if (listings && listings.length > 0 && listings[0].permalink) {
     return { isPublished: true, permalink: listings[0].permalink }
