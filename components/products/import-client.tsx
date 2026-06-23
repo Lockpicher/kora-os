@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { processImportDryRun, executeImport, CSVRow, ImportPreview } from "@/app/(dashboard)/products/import/actions"
+import { processImportDryRun, executeImport, repairWooCommerceImages, CSVRow, ImportPreview } from "@/app/(dashboard)/products/import/actions"
 import { useRouter } from "next/navigation"
 
 interface NormalizedRow {
@@ -81,6 +81,8 @@ export default function ImportClient() {
   // Backend preview
   const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isRepairing, setIsRepairing] = useState(false)
+  const [repairStats, setRepairStats] = useState<{repairedCount: number, totalDetected: number} | null>(null)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -392,6 +394,23 @@ export default function ImportClient() {
     setAllRows([])
     setColumnMap({})
     setPreview(null)
+    setRepairStats(null)
+  }
+
+  const handleRepairImages = async () => {
+    setIsRepairing(true)
+    try {
+      const res = await repairWooCommerceImages()
+      if (res.success) {
+        setRepairStats({ repairedCount: res.repairedCount || 0, totalDetected: res.totalDetected || 0 })
+      } else {
+        alert("Error reparando imágenes: " + res.error)
+      }
+    } catch (e: any) {
+      alert("Error crítico: " + e.message)
+    } finally {
+      setIsRepairing(false)
+    }
   }
 
   return (
@@ -753,6 +772,29 @@ export default function ImportClient() {
             <div className="flex gap-4 mt-4">
               <Button onClick={() => router.push("/products")}>Ir al Catálogo</Button>
               <Button variant="outline" onClick={resetImport}>Importar otro archivo</Button>
+            </div>
+
+            <div className="mt-8 pt-8 border-t border-green-200/50 w-full max-w-md space-y-4">
+              <h4 className="text-sm font-semibold text-green-800 dark:text-green-500">Tareas de Normalización</h4>
+              <p className="text-xs text-green-700 dark:text-green-400">WooCommerce suele guardar la imagen solo en el producto padre. Usa esta herramienta para que las variantes huérfanas hereden la imagen automáticamente.</p>
+              
+              <Button 
+                variant="secondary" 
+                className="w-full bg-white dark:bg-black"
+                onClick={handleRepairImages} 
+                disabled={isRepairing || repairStats !== null}
+              >
+                {isRepairing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Reparar imágenes WooCommerce
+              </Button>
+              
+              {repairStats && (
+                <div className="text-xs bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300 p-2 rounded border border-green-200 dark:border-green-800 mt-2">
+                  Se detectaron {repairStats.totalDetected} variantes afectadas.
+                  <br/>
+                  <strong>¡Se repararon {repairStats.repairedCount} imágenes exitosamente!</strong>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

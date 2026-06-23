@@ -286,3 +286,65 @@ export async function executeImport(rows: CSVRow[]) {
   revalidatePath("/products")
   return { success: stats.errores.length === 0, stats, error: stats.errores.join(" | ") }
 }
+
+export async function repairWooCommerceImages() {
+  const supabase = await createClient()
+
+  // 1. Obtener variantes CON imagen
+  const { data: variantsWithImages, error: e1 } = await supabase
+    .from("product_variants")
+    .select("id, product_id, image_url")
+    .not("image_url", "is", null)
+
+  if (e1) return { success: false, error: e1.message }
+
+  const productImages: Record<string, string> = {}
+  const updates: { id: string, image_url: string }[] = []
+
+  variantsWithImages?.forEach(v => {
+    let finalUrl = v.image_url
+    if (finalUrl && finalUrl.includes(",")) {
+      // Tomar solo la primera imagen, el resto se ignora por ahora (galería futura)
+      finalUrl = finalUrl.split(",")[0].trim()
+      updates.push({ id: v.id, image_url: finalUrl })
+    }
+    
+    // Guardar la primera imagen válida para heredar a sus hermanos
+    if (finalUrl && !productImages[v.product_id]) {
+      productImages[v.product_id] = finalUrl
+    }
+  })
+
+  // 2. Obtener variantes SIN imagen
+  const { data: variantsWithoutImages, error: e2 } = await supabase
+    .from("product_variants")
+    .select("id, product_id")
+    .is("image_url", null)
+
+  if (e2) return { success: false, error: e2.message }
+
+  variantsWithoutImages?.forEach(v => {
+    if (productImages[v.product_id]) {
+      updates.push({
+        id: v.id,
+        image_url: productImages[v.product_id]
+      })
+    }
+  })
+
+  // 3. Ejecutar actualizaciones
+  let successCount = 0
+  if (updates.length > 0) {
+    for (const update of updates) {
+      const { error } = await supabase
+        .from("product_variants")
+        .update({ image_url: update.image_url })
+        .eq("id", update.id)
+        
+      if (!error) successCount++
+    }
+  }
+
+  revalidatePath("/products")
+  return { success: true, repairedCount: successCount, totalDetected: updates.length }
+}
