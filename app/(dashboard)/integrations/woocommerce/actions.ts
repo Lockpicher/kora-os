@@ -146,13 +146,35 @@ export async function syncProductToWooCommerce(productId: string) {
   if (pErr || !product) return { success: false, error: "Producto no encontrado." }
 
   // 3. Obtener variantes activas
-  const { data: variants, error: vErr } = await supabase
+  // Diagnóstico
+  const { data: diagVariants } = await supabase
+    .from("product_variants")
+    .select("id, active")
+    .eq("product_id", productId)
+
+  const { data: variants } = await supabase
     .from("product_variants")
     .select("*")
     .eq("product_id", productId)
     .eq("active", true)
 
-  if (vErr || !variants || variants.length === 0) return { success: false, error: "El producto no tiene variantes activas para publicar." }
+  if (!variants || variants.length === 0) {
+    const totalFound = diagVariants?.length || 0
+    const activeFound = variants?.length || 0
+    const details = diagVariants?.map(v => `ID: ${v.id}, Active: ${v.active}`).join(" | ") || "Ninguna variante asociada al producto"
+    
+    console.log("=== DIAGNÓSTICO WOOCOMMERCE PUBLISH ===")
+    console.log(`Product ID: ${productId}`)
+    console.log(`Variantes Totales: ${totalFound}`)
+    console.log(`Variantes Activas: ${activeFound}`)
+    console.log(`Detalle: ${details}`)
+    console.log("======================================")
+
+    return { 
+      success: false, 
+      error: `El producto no tiene variantes activas para publicar. Diagnóstico: Totales (${totalFound}), Activas (${activeFound}). Detalle: ${details}` 
+    }
+  }
 
   // 4. Determinar tipo y preparar payload base
   const isSimple = variants.length === 1

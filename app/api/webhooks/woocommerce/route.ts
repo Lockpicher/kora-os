@@ -92,7 +92,17 @@ export async function POST(req: NextRequest) {
       let variantId = null
       let syncErrorReason = null
 
-      if (sku) {
+      if (!sku || sku.trim() === "") {
+        hasSyncError = true
+        // Guardamos metadatos como JSON stringificado para leerlo en el dashboard
+        const missingSkuData = {
+          reason: "Producto sin SKU en WooCommerce",
+          product_id: item.product_id,
+          name: item.name,
+          url: conn?.credentials?.store_url ? `${conn.credentials.store_url}/?p=${item.product_id}` : "#"
+        }
+        syncErrorReason = JSON.stringify(missingSkuData)
+      } else {
         // Buscar variante por SKU en KORA
         const { data: variant } = await supabase
           .from("product_variants")
@@ -104,11 +114,14 @@ export async function POST(req: NextRequest) {
           variantId = variant.id
         } else {
           hasSyncError = true
-          syncErrorReason = "SKU no encontrado en KORA"
+          syncErrorReason = JSON.stringify({
+            reason: "SKU no encontrado en KORA",
+            product_id: item.product_id,
+            name: item.name,
+            sku: sku,
+            url: conn?.credentials?.store_url ? `${conn.credentials.store_url}/?p=${item.product_id}` : "#"
+          })
         }
-      } else {
-        hasSyncError = true
-        syncErrorReason = "Producto sin SKU en WooCommerce"
       }
 
       itemsToInsert.push({

@@ -173,6 +173,65 @@ export default function DashboardClient({ metrics, variants }: { metrics: Dashbo
         </Card>
       </div>
 
+      {/* Tabla de Productos sin SKU o Huérfanos */}
+      {metrics.orphan_skus && metrics.orphan_skus.length > 0 && (
+        <Card className="bg-card border-rose-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <AlertTriangle className="h-5 w-5" /> Productos WooCommerce sin SKU
+            </CardTitle>
+            <CardDescription>
+              Estos productos se han vendido recientemente pero no tienen un SKU válido en WooCommerce o no coinciden con KORA.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="border border-border rounded-lg overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Product ID</TableHead>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Problema</TableHead>
+                    <TableHead>SKU Recibido</TableHead>
+                    <TableHead>Fecha Última Venta</TableHead>
+                    <TableHead className="text-right">Acción</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {metrics.orphan_skus.map((orphan) => (
+                    <TableRow key={orphan.id}>
+                      <TableCell className="font-mono text-sm">{orphan.product_id}</TableCell>
+                      <TableCell className="font-medium text-foreground">{orphan.name}</TableCell>
+                      <TableCell>
+                        <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium border bg-rose-500/10 text-rose-600 border-rose-500/20">
+                          {orphan.reason}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {orphan.sku || <span className="italic">Vacio / Nulo</span>}
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {new Date(orphan.last_sale).toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <a 
+                          href={orphan.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sm text-primary hover:underline font-medium"
+                        >
+                          Corregir en WC
+                        </a>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* 3. Rankings Top / Bottom */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="bg-card border-border">

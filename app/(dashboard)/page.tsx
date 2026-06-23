@@ -39,6 +39,17 @@ export interface DashboardMetrics {
   wc_orders_today: number
   wc_sales_today: number
   sync_errors: number
+  orphan_skus: DashboardOrphanSKU[]
+}
+
+export interface DashboardOrphanSKU {
+  id: string
+  product_id: number
+  name: string
+  url: string
+  reason: string
+  last_sale: string
+  sku?: string
 }
 
 type RawVariant = {
@@ -106,6 +117,39 @@ export default async function DashboardPage() {
     wc_orders_today = ordersData.length
     wc_sales_today = ordersData.reduce((acc, curr) => acc + Number(curr.total), 0)
     sync_errors = ordersData.filter(o => o.has_sync_error).length
+  }
+
+  // 4. Cargar Items Huérfanos (SKUs faltantes o sin SKU)
+  const { data: orphanItemsData } = await supabase
+    .from("order_items")
+    .select("id, sync_error_reason, created_at")
+    .not("sync_error_reason", "is", null)
+    .order("created_at", { ascending: false })
+
+  const orphan_skus: DashboardOrphanSKU[] = []
+  const seenProducts = new Set<number>()
+
+  if (orphanItemsData) {
+    for (const item of orphanItemsData) {
+      try {
+        const parsed = JSON.parse(item.sync_error_reason)
+        // Group by product_id to avoid spamming the table with the same product
+        if (parsed.product_id && !seenProducts.has(parsed.product_id)) {
+          seenProducts.add(parsed.product_id)
+          orphan_skus.push({
+            id: item.id,
+            product_id: parsed.product_id,
+            name: parsed.name || "Producto desconocido",
+            url: parsed.url || "#",
+            reason: parsed.reason || "Error desconocido",
+            last_sale: item.created_at,
+            sku: parsed.sku || ""
+          })
+        }
+      } catch (e) {
+        // Ignorar items que no sean JSON (legacy)
+      }
+    }
   }
 
   // === Motor de Cálculo Ejecutivo ===
@@ -196,7 +240,8 @@ export default async function DashboardPage() {
     health_no_price,
     wc_orders_today,
     wc_sales_today,
-    sync_errors
+    sync_errors,
+    orphan_skus
   }
 
   return (
