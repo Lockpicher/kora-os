@@ -109,9 +109,9 @@ export default async function IntegrationsPage() {
                 </CardDescription>
               </CardHeader>
               <CardFooter className="mt-auto pt-4 border-t border-border">
-                {channel.code === "ML" ? (
+                {(channel.code === "ML" || channel.code === "WC") ? (
                   <Button asChild variant={isConnected ? "outline" : "default"} className="w-full gap-2" disabled={!channel.active}>
-                    <Link href="/integrations/mercadolibre">
+                    <Link href={channel.code === "ML" ? "/integrations/mercadolibre" : "/integrations/woocommerce"}>
                       {isConnected ? "Configurar" : "Conectar"} <ArrowRight className="h-4 w-4" />
                     </Link>
                   </Button>

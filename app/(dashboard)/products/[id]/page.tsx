@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 "use client"
 
 import * as React from "react"
@@ -14,6 +16,7 @@ import { getProductById, updateProduct, getProductAttributeValues } from "../act
 import ProductImages from "@/components/products/product-images"
 import { getAttributeDefinitionsByCategory, getAttributeOptions, AttributeDefinition } from "../../attributes/actions"
 import ProductVariants from "@/components/products/product-variants"
+import { syncProductToWooCommerce, getWooCommerceListingStatus } from "../../integrations/woocommerce/actions"
 
 export default function EditProductPage() {
   const router = useRouter()
@@ -26,6 +29,10 @@ export default function EditProductPage() {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [errorMsg, setErrorMsg] = React.useState("")
   const [skuError, setSkuError] = React.useState(false)
+
+  // Woo Sync State
+  const [wooStatus, setWooStatus] = React.useState<{ isPublished: boolean; permalink: string | null }>({ isPublished: false, permalink: null })
+  const [isSyncingWoo, setIsSyncingWoo] = React.useState(false)
 
   // Form states
   const [sku, setSku] = React.useState("")
@@ -54,14 +61,16 @@ export default function EditProductPage() {
     async function loadData() {
       setIsLoading(true)
       try {
-        const [brandsData, categoriesData, productData] = await Promise.all([
+        const [brandsData, categoriesData, productData, wooData] = await Promise.all([
           getBrands(),
           getCategories(),
           getProductById(productId),
+          getWooCommerceListingStatus(productId)
         ])
 
         setBrands(brandsData.filter((b: { active: boolean }) => b.active))
         setCategories(categoriesData.filter((c: { active: boolean }) => c.active))
+        setWooStatus(wooData)
 
         if (productData) {
           setSku(productData.sku || "")
@@ -225,19 +234,60 @@ export default function EditProductPage() {
     )
   }
 
+  const handleSyncWoo = async () => {
+    setIsSyncingWoo(true)
+    try {
+      const res = await syncProductToWooCommerce(productId)
+      if (res.success) {
+        alert(res.message)
+        // Refresh status
+        const updatedStatus = await getWooCommerceListingStatus(productId)
+        setWooStatus(updatedStatus)
+      } else {
+        alert("Error al sincronizar con WooCommerce: " + res.error)
+      }
+    } catch (e: any) {
+      alert("Error crítico: " + e.message)
+    } finally {
+      setIsSyncingWoo(false)
+    }
+  }
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center space-x-4">
-        <Link href="/products" passHref legacyBehavior>
-          <Button variant="outline" size="icon" title="Volver">
-            <ArrowLeft className="h-4 w-4" />
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center space-x-4">
+          <Link href="/products" passHref legacyBehavior>
+            <Button variant="outline" size="icon" title="Volver">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight text-foreground">Editar Producto</h2>
+            <p className="text-muted-foreground mt-1">
+              Modifica la información general y dimensiones logísticas de tu producto.
+            </p>
+          </div>
+        </div>
+
+        {/* Botón de Sincronización WooCommerce */}
+        <div className="flex items-center gap-3 bg-muted/30 p-2 rounded-lg border border-border">
+          <div className="flex flex-col items-end">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">WooCommerce</span>
+            {wooStatus.isPublished ? (
+              <a href={wooStatus.permalink || "#"} target="_blank" rel="noopener noreferrer" className="text-xs text-purple-600 hover:underline flex items-center gap-1 mt-0.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-500"></span> Ver en tienda
+              </a>
+            ) : (
+              <span className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                <span className="h-2 w-2 rounded-full bg-slate-300"></span> No publicado
+              </span>
+            )}
+          </div>
+          <Button variant="secondary" onClick={handleSyncWoo} disabled={isSyncingWoo} className="gap-2">
+            {isSyncingWoo && <Loader2 className="h-4 w-4 animate-spin" />}
+            {wooStatus.isPublished ? "Actualizar" : "Publicar"}
           </Button>
-        </Link>
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight text-foreground">Editar Producto</h2>
-          <p className="text-muted-foreground mt-1">
-            Modifica la información general y dimensiones logísticas de tu producto.
-          </p>
         </div>
       </div>
 
