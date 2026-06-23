@@ -145,6 +145,33 @@ export async function syncProductToWooCommerce(productId: string) {
 
   if (pErr || !product) return { success: false, error: "Producto no encontrado." }
 
+  // Helper para Sincronizar Categorías en WooCommerce
+  async function syncWooCommerceCategory(categoryName: string): Promise<number | null> {
+    try {
+      // 1. Buscar si existe la categoría
+      const searchRes = await fetch(`${store_url}/wp-json/wc/v3/products/categories?search=${encodeURIComponent(categoryName)}`, { headers })
+      if (searchRes.ok) {
+        const found = await searchRes.json()
+        const exactMatch = found.find((c: any) => c.name.toLowerCase() === categoryName.toLowerCase())
+        if (exactMatch) return exactMatch.id
+      }
+
+      // 2. Si no existe, crearla
+      const createRes = await fetch(`${store_url}/wp-json/wc/v3/products/categories`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name: categoryName })
+      })
+      if (createRes.ok) {
+        const created = await createRes.json()
+        return created.id
+      }
+    } catch (e) {
+      console.error("Error sincronizando categoría en WC:", e)
+    }
+    return null
+  }
+
   // 3. Obtener variantes activas
   // Diagnóstico
   const { data: diagVariants } = await supabase
@@ -158,24 +185,34 @@ export async function syncProductToWooCommerce(productId: string) {
     .eq("product_id", productId)
     .eq("active", true)
 
+  // 4. Determinar tipo y preparar payload base
+  const isSimple = variants?.length === 1
   const isLegacySimple = !variants || variants.length === 0
-  const isSimple = isLegacySimple || variants.length === 1
-  const categories = product.categories ? [{ name: (product.categories as any).name }] : []
-  // WC usa name para categories o se debe enviar ID, si se envía solo nombre no siempre lo enlaza si no existe,
-  // Pero lo ideal es crear las tags o manejar el category en WC. Asumiremos por ahora el name.
-  // Wait: WooCommerce requiere category IDs, pero para este MVP podemos omitirlo o enviar el array. Omitámoslo temporalmente si falla o mandemos el nombre.
+  const isSimpleType = isLegacySimple || isSimple
 
   const basePayload: any = {
     name: product.name,
     status: product.active ? "publish" : "draft",
-    type: isSimple ? "simple" : "variable"
+    type: isSimpleType ? "simple" : "variable"
   }
 
-  if (product.categories) {
-     // Nota: Lo ideal es buscar la categoría en Woo primero, pero para este scope dejaremos las categorías vacías o le enviamos un array si WooCommerce lo permite (WC prefiere {id: ...}).
+  // 5. Categorías
+  let assignedCategoryName = "Ninguna"
+  let wcCategoryId = null
+  const catName = product.categories ? (product.categories as any).name : null
+  
+  if (catName) {
+    wcCategoryId = await syncWooCommerceCategory(catName)
+    if (wcCategoryId) {
+      basePayload.categories = [{ id: wcCategoryId }]
+      assignedCategoryName = catName
+    }
   }
 
-  if (isSimple) {
+  // Variables para Diagnóstico de Retorno
+  let imagesSentCount = 0
+
+  if (isSimpleType) {
     if (isLegacySimple) {
       basePayload.regular_price = (product as any).price ? (product as any).price.toString() : "0"
       basePayload.sku = (product as any).sku || `PROD-${product.slug || productId.substring(0, 6)}`
@@ -183,6 +220,7 @@ export async function syncProductToWooCommerce(productId: string) {
       basePayload.stock_quantity = (product as any).stock || 0
       if ((product as any).image_url) {
         basePayload.images = [{ src: (product as any).image_url }]
+        imagesSentCount++
       }
     } else {
       const v = variants[0]
@@ -192,6 +230,7 @@ export async function syncProductToWooCommerce(productId: string) {
       basePayload.stock_quantity = v.stock || 0
       if (v.image_url) {
         basePayload.images = [{ src: v.image_url }]
+        imagesSentCount++
       }
     }
   } else {
@@ -205,6 +244,12 @@ export async function syncProductToWooCommerce(productId: string) {
         options: variants.map(v => v.name)
       }
     ]
+    // Imagen principal del producto padre (usamos la primera variante o producto)
+    const parentImage = (product as any).image_url || variants.find(v => v.image_url)?.image_url
+    if (parentImage) {
+      basePayload.images = [{ src: parentImage }]
+      imagesSentCount++
+    }
   }
 
   const variantsIds = variants ? variants.map(v => v.id) : []
@@ -255,7 +300,7 @@ export async function syncProductToWooCommerce(productId: string) {
     wooProductId = wooProduct.id
 
     // Si es Simple, guardamos/actualizamos su único listing y terminamos
-    if (isSimple) {
+    if (isSimpleType) {
       const sourceData = {
         woocommerce_product_id: wooProduct.id,
         woocommerce_variation_id: null,
@@ -307,6 +352,7 @@ export async function syncProductToWooCommerce(productId: string) {
         }
         if (v.image_url) {
           variationPayload.image = { src: v.image_url }
+          imagesSentCount++
         }
 
         const existingVarListing = existingListings?.find(l => l.variant_id === v.id)
@@ -360,7 +406,11 @@ export async function syncProductToWooCommerce(productId: string) {
 
     revalidatePath("/products")
     revalidatePath(`/products/${productId}`)
-    return { success: true, message: `Sincronizado exitosamente: ${product.name} como ${isSimple ? 'Simple' : 'Variable'}` }
+    
+    return { 
+      success: true, 
+      message: `Sincronizado exitosamente: ${product.name}\n\nDetalles:\n- Tipo: ${isSimpleType ? 'Simple' : 'Variable'}\n- Product ID WC: ${wooProductId}\n- Categoría: ${assignedCategoryName}\n- Imágenes enviadas: ${imagesSentCount}` 
+    }
 
   } catch (e: any) {
     return { success: false, error: "Error de ejecución: " + e.message }

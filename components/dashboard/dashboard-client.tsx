@@ -214,14 +214,22 @@ export default function DashboardClient({ metrics, variants }: { metrics: Dashbo
                         {new Date(orphan.last_sale).toLocaleString()}
                       </TableCell>
                       <TableCell className="text-right">
-                        <a 
-                          href={orphan.url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-sm text-primary hover:underline font-medium"
-                        >
-                          Corregir en WC
-                        </a>
+                        <div className="flex items-center justify-end gap-3">
+                          <a 
+                            href={`/products?search=${encodeURIComponent(orphan.sku || orphan.name)}`}
+                            className="text-sm text-amber-600 dark:text-amber-500 hover:underline font-medium whitespace-nowrap"
+                          >
+                            Ver sugerencia
+                          </a>
+                          <a 
+                            href={orphan.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-sm text-primary hover:underline font-medium whitespace-nowrap"
+                          >
+                            Corregir en WC
+                          </a>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
