@@ -6,6 +6,7 @@ import { getMLConnection, getMLListings } from "./actions"
 import SyncButton from "@/components/mercadolibre/sync-button"
 import DisconnectButton from "@/components/mercadolibre/disconnect-button"
 import SyncMetricsButton from "@/components/mercadolibre/sync-metrics-button"
+import SyncOrdersButton from "@/components/mercadolibre/sync-orders-button"
 import Link from "next/link"
 
 export const metadata = {
@@ -75,6 +76,7 @@ export default async function MercadoLibrePage(
                   <LinkIcon className="h-4 w-4" /> Reconectar Cuenta
                 </Link>
               </Button>
+              <SyncOrdersButton />
               <SyncMetricsButton />
               <SyncButton />
               <DisconnectButton connectionId={connection.id} />

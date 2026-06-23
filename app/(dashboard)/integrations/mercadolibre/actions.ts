@@ -619,3 +619,116 @@ export async function testInventoryItem() {
     return { success: false, status: 500, response: err instanceof Error ? err.message : String(err) }
   }
 }
+
+// ==========================================
+// FASE 9A: SYNC ML ORDERS (90 days)
+// ==========================================
+export async function syncMLOrders() {
+  try {
+    const supabase = await createClient()
+    const mlConnection = await getMLConnection()
+
+    if (!mlConnection.success || !mlConnection.connected || !mlConnection.connection) {
+      return { success: false, error: "No hay conexión a Mercado Libre." }
+    }
+
+    const { external_user_id, channel_id } = mlConnection.connection
+    const access_token = await refreshMercadoLibreToken(mlConnection.connection)
+
+    // Últimos 90 días
+    const dateFrom = new Date()
+    dateFrom.setDate(dateFrom.getDate() - 90)
+    // El formato de ML requiere milisegundos y timezone offset exacto, ej: 2023-01-01T00:00:00.000-00:00
+    // toISOString() da "2023-01-01T00:00:00.000Z" que ML acepta.
+    const dateFromStr = dateFrom.toISOString()
+
+    let offset = 0
+    const limit = 50
+    let total = 1
+    let syncedOrders = 0
+    let syncedItems = 0
+
+    // Para conciliación
+    const { data: existingListings } = await supabase
+      .from("channel_listings")
+      .select("id, external_id, variant_id")
+      .eq("channel_id", channel_id)
+
+    const listingMap = new Map()
+    if (existingListings) {
+      for (const l of existingListings) {
+        listingMap.set(l.external_id, { id: l.id, variant_id: l.variant_id })
+      }
+    }
+
+    while (offset < total) {
+      const url = `https://api.mercadolibre.com/orders/search?seller=${external_user_id}&order.date_created.from=${dateFromStr}&offset=${offset}&limit=${limit}`
+      const ordersRes = await fetch(url, { headers: { Authorization: `Bearer ${access_token}` } })
+      
+      if (!ordersRes.ok) throw new Error("Error fetching ML orders: " + await ordersRes.text())
+      
+      const ordersBody = await ordersRes.json()
+      total = ordersBody.paging?.total || 0
+      
+      const orders = ordersBody.results || []
+
+      for (const order of orders) {
+        const orderData = {
+          order_id: String(order.id),
+          total_amount: order.total_amount,
+          status: order.status,
+          date_created: order.date_created,
+          buyer_id: String(order.buyer?.id || ""),
+          synced_at: new Date().toISOString()
+        }
+
+        const { data: savedOrder, error: orderErr } = await supabase
+          .from("ml_orders")
+          .upsert(orderData, { onConflict: "order_id" })
+          .select("id")
+          .single()
+
+        if (orderErr || !savedOrder) {
+          console.error("Error upserting order", orderErr)
+          continue
+        }
+
+        syncedOrders++
+
+        // Borrar items existentes para esta orden
+        await supabase.from("ml_order_items").delete().eq("order_id", savedOrder.id)
+
+        // Insertar items
+        for (const item of order.order_items) {
+          const item_id = item.item.id
+          const listingInfo = listingMap.get(item_id)
+          
+          await supabase.from("ml_order_items").insert({
+            order_id: savedOrder.id,
+            item_id: item_id,
+            title: item.item.title,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            channel_listing_id: listingInfo ? listingInfo.id : null,
+            variant_id: listingInfo ? listingInfo.variant_id : null
+          })
+          syncedItems++
+        }
+      }
+      
+      offset += limit
+      if (offset >= total) break
+    }
+
+    revalidatePath("/integrations/mercadolibre")
+    
+    return {
+      success: true,
+      orders: syncedOrders,
+      items: syncedItems
+    }
+  } catch (e: unknown) {
+    console.error("Exception in syncMLOrders:", e)
+    return { success: false, error: e instanceof Error ? e.message : "Error desconocido" }
+  }
+}
