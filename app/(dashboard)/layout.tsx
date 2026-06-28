@@ -1,6 +1,7 @@
 import Sidebar from "@/components/dashboard/sidebar"
 import Topbar from "@/components/dashboard/topbar"
 import { CommandPalette } from "@/components/dashboard/command-palette"
+import { EntityDrawer } from "@/components/entity/entity-drawer"
 
 export default function DashboardLayout({
   children,
@@ -10,6 +11,7 @@ export default function DashboardLayout({
   return (
     <div className="min-h-screen bg-background">
       <CommandPalette />
+      <EntityDrawer />
       {/* Sidebar */}
       <Sidebar />
 
@@ -24,9 +26,6 @@ export default function DashboardLayout({
             {children}
           </div>
         </main>
-        
-        {/* Placeholder for future Task Drawer */}
-        <div id="drawer-root" className="absolute top-0 right-0 h-full pointer-events-none" />
       </div>
     </div>
   )
