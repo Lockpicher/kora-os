@@ -8,8 +8,11 @@ export async function createTaskAction(cmd: CreateTaskCommand) {
   try {
     const task = await workService.createTask(cmd)
     return { success: true, data: task }
-  } catch (error: any) {
-    return { success: false, error: error.message }
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      return { success: false, error: error.message }
+    }
+    return { success: false, error: "An unknown error occurred" }
   }
 }
 
@@ -17,7 +20,10 @@ export async function moveTaskAction(cmd: MoveTaskCommand) {
   try {
     const task = await workService.moveTask(cmd)
     return { success: true, data: task }
-  } catch (error: any) {
-    return { success: false, error: error.message }
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      return { success: false, error: error.message }
+    }
+    return { success: false, error: "An unknown error occurred" }
   }
 }
