@@ -35,6 +35,17 @@ export function EntityTaskForm() {
     }
   })
 
+  const [projectId, setProjectId] = React.useState<string>("")
+  const [workflowColumnId, setWorkflowColumnId] = React.useState<string>("")
+  const [priorityId, setPriorityId] = React.useState<string>("")
+
+  // Set default workflow column when options load
+  React.useEffect(() => {
+    if (options?.workflows && options.workflows.length > 0 && !workflowColumnId) {
+      setWorkflowColumnId(options.workflows[0].id)
+    }
+  }, [options, workflowColumnId])
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setLoading(true)
@@ -43,9 +54,9 @@ export function EntityTaskForm() {
     const cmd = {
       title: formData.get("title") as string,
       description: formData.get("description") as string,
-      project_id: formData.get("project_id") as string || undefined,
-      workflow_column_id: formData.get("workflow_column_id") as string,
-      priority_id: formData.get("priority_id") as string || undefined
+      project_id: projectId || undefined,
+      workflow_column_id: workflowColumnId,
+      priority_id: priorityId || undefined
     }
 
     if (!cmd.workflow_column_id) {
@@ -58,13 +69,9 @@ export function EntityTaskForm() {
     setLoading(false)
     
     if (res.success) {
-      // 4. Invalidar TanStack Query
       queryClient.invalidateQueries({ queryKey: ['kanban'] })
-      // 5. Cerrar Drawer
       closeDrawer()
-      // 6. Mostrar toast de éxito
       alert("Tarea creada con éxito") // Reemplazar con toast real si existe
-      // 7. Ir automáticamente a Kanban y forzar recarga del Server Component
       router.push("/work/kanban")
       router.refresh()
     } else {
@@ -84,7 +91,7 @@ export function EntityTaskForm() {
         </EntityFormField>
         
         <EntityFormField label="Proyecto">
-          <Select name="project_id">
+          <Select value={projectId} onValueChange={setProjectId}>
             <SelectTrigger>
               <SelectValue placeholder="Seleccionar proyecto..." />
             </SelectTrigger>
@@ -97,7 +104,7 @@ export function EntityTaskForm() {
         </EntityFormField>
 
         <EntityFormField label="Flujo de Trabajo (Columna)" required>
-          <Select name="workflow_column_id" defaultValue={options?.workflows?.[0]?.id}>
+          <Select value={workflowColumnId} onValueChange={setWorkflowColumnId}>
             <SelectTrigger>
               <SelectValue placeholder="Seleccionar estado..." />
             </SelectTrigger>
@@ -110,7 +117,7 @@ export function EntityTaskForm() {
         </EntityFormField>
 
         <EntityFormField label="Prioridad">
-          <Select name="priority_id">
+          <Select value={priorityId} onValueChange={setPriorityId}>
             <SelectTrigger>
               <SelectValue placeholder="Seleccionar prioridad..." />
             </SelectTrigger>
