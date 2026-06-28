@@ -42,12 +42,8 @@ export async function createTaskAction(cmd: Record<string, unknown>) {
     }
 
     const task = await workService.createTask(taskCommand)
-    const fs = require('fs')
-    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] CREATE TASK SUCCESS: ${task.id}\n`)
     return { success: true, data: task }
   } catch (error: unknown) {
-    const fs = require('fs')
-    fs.appendFileSync('debug.log', `[${new Date().toISOString()}] CREATE TASK ERROR: ${error instanceof Error ? error.stack : JSON.stringify(error)}\n`)
     console.error("CREATE TASK ERROR:", error)
     if (error instanceof z.ZodError) {
       return { success: false, error: error.errors[0].message }
