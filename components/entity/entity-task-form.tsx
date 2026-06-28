@@ -64,8 +64,9 @@ export function EntityTaskForm() {
       closeDrawer()
       // 6. Mostrar toast de éxito
       alert("Tarea creada con éxito") // Reemplazar con toast real si existe
-      // 7. Ir automáticamente a Kanban
+      // 7. Ir automáticamente a Kanban y forzar recarga del Server Component
       router.push("/work/kanban")
+      router.refresh()
     } else {
       alert(`Error al crear la tarea: ${res.error}`)
     }
