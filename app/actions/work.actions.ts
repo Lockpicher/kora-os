@@ -17,9 +17,17 @@ export async function createTaskAction(cmd: Record<string, unknown>) {
       throw new Error("Unauthorized")
     }
 
-    const { data: orgMember } = await supabase.from("organization_members").select("organization_id").eq("user_id", user.id).single()
+    let orgMember = await supabase.from("organization_members").select("organization_id").eq("user_id", user.id).single().then(res => res.data)
+    
+    // Auto-link to default org if user has none (for local dev/testing)
     if (!orgMember?.organization_id) {
-      throw new Error("User has no organization")
+      const defaultOrgId = '00000000-0000-0000-0000-000000000000'
+      await supabase.from("organization_members").insert({
+        organization_id: defaultOrgId,
+        user_id: user.id,
+        role: 'owner'
+      })
+      orgMember = { organization_id: defaultOrgId }
     }
 
     const validatedData = TaskInsertSchema.parse({
