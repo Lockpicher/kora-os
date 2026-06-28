@@ -27,3 +27,15 @@ export async function moveTaskAction(cmd: MoveTaskCommand) {
     return { success: false, error: "An unknown error occurred" }
   }
 }
+
+export async function updateTaskAction(id: string, updateData: Record<string, unknown>) {
+  try {
+    const task = await workService.updateTask(id, updateData)
+    return { success: true, data: task }
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      return { success: false, error: error.message }
+    }
+    return { success: false, error: "An unknown error occurred" }
+  }
+}

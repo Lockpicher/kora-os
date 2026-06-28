@@ -1,3 +1,5 @@
+import { updateTaskAction } from "@/app/actions/work.actions"
+
 export type SaveTask = {
   id: string
   entityType: string
@@ -6,7 +8,7 @@ export type SaveTask = {
   status: "pending" | "saving" | "success" | "error"
 }
 
-class AutoSaveQueueManager {
+export class AutoSaveQueueManager {
   private queue: SaveTask[] = []
   private isProcessing = false
   
@@ -23,9 +25,13 @@ class AutoSaveQueueManager {
       const task = this.queue[0]
       try {
         task.status = "saving"
-        // TODO: Inyectar lógica real de repositorio aquí.
-        // Simulamos guardado a la DB
-        await new Promise(resolve => setTimeout(resolve, 800)) 
+        
+        if (task.entityType === 'task') {
+           const res = await updateTaskAction(task.entityId, task.payload)
+           if (!res.success) throw new Error(res.error)
+        }
+        // Futuro: soportar otros entityTypes
+        
         task.status = "success"
         this.queue.shift() // Quitamos la tarea exitosa de la cola
       } catch {

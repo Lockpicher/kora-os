@@ -44,5 +44,5 @@ export default async function WorkKanbanPage() {
     )
   }
 
-  return <WorkKanbanClient initialColumns={boardColumns} />
+  return <WorkKanbanClient orgId={orgId} initialColumns={boardColumns} />
 }

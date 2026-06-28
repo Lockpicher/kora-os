@@ -5,6 +5,7 @@ import { useDrawerStore } from "@/store/drawer-store"
 import { X, LayoutPanelLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { EntityTaskContent } from "./entity-task-content"
+import { EntityTaskForm } from "./entity-task-form"
 import { ActivityTimeline } from "./activity-timeline"
 
 const entityTabs: Record<string, string[]> = {
@@ -101,9 +102,13 @@ export function EntityDrawer() {
            {mode === "create" ? (
              <div className="flex flex-col h-full">
                <h2 className="text-xl font-semibold mb-6">Nuevo {entityType === "project" ? "Proyecto" : entityType === "task" ? "Tarea" : "Elemento"}</h2>
-               <div className="flex-1 border border-dashed border-border rounded-lg bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
-                 Formulario de Creación en construcción...
-               </div>
+               {entityType === "task" ? (
+                 <EntityTaskForm />
+               ) : (
+                 <div className="flex-1 border border-dashed border-border rounded-lg bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
+                   Formulario de Creación de {entityType} en construcción...
+                 </div>
+               )}
              </div>
            ) : activeTab === "Actividad" ? (
               <ActivityTimeline />

@@ -2,6 +2,8 @@
 
 import * as React from "react"
 
+import { EntityEditor } from "@/components/editor/entity-editor"
+
 export function EntityTaskContent({ taskId }: { taskId: string }) {
   return (
     <div className="space-y-8">
@@ -27,18 +29,20 @@ export function EntityTaskContent({ taskId }: { taskId: string }) {
         </div>
       </div>
 
-      {/* Description (TipTap placeholder) */}
+      {/* Description */}
       <div className="pt-6 border-t border-border">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold">Descripción</h3>
-          {/* AutoSave Indicator Placeholder */}
           <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 bg-muted px-2 py-1 rounded-md">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Guardado
           </span>
         </div>
-        <div className="min-h-[250px] p-4 rounded-lg border border-border bg-card text-sm text-muted-foreground shadow-xs">
-          Editor TipTap en construcción... (Autoguardado por queue de la Fase 0)
-        </div>
+        <EntityEditor 
+          initialContent="Esta tarea es parte del rediseño del catálogo." 
+          entityId={taskId} 
+          entityType="task" 
+          field="description" 
+        />
       </div>
     </div>
   )

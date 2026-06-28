@@ -22,6 +22,22 @@ export class WorkService {
     return task
   }
 
+  async updateTask(id: string, updateData: Record<string, unknown>) {
+    const task = await this.taskRepo.update(id, updateData)
+    
+    // Emit Event
+    const supabase = await createClient()
+    await supabase.from('events').insert({
+      organization_id: task.organization_id,
+      event_name: 'TaskUpdated',
+      aggregate_type: 'task',
+      aggregate_id: task.id,
+      payload: updateData
+    })
+
+    return task
+  }
+
   async moveTask(cmd: MoveTaskCommand) {
     const task = await this.taskRepo.update(cmd.task_id, {
       workflow_column_id: cmd.target_column_id

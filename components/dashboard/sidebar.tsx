@@ -4,13 +4,14 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { navigationGroups } from "./navigation"
 import { cn } from "@/lib/utils"
-import { Plus, CheckSquare, Folder, BriefcaseBusiness, Package, Zap, FileText, Bot } from "lucide-react"
+import { Plus, CheckSquare, Folder, BriefcaseBusiness, Package, FileText, Bot, Upload, Settings, Star, Clock, FileSpreadsheet } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 
@@ -28,45 +29,67 @@ export default function Sidebar() {
         </Link>
       </div>
 
-      {/* Action Button: Nuevo */}
+      {/* Action Button: Nuevo Launcher */}
       <div className="px-4 py-4">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="default" className="w-full justify-start gap-2 h-9 shadow-xs hover:shadow-md transition-shadow">
-              <Plus className="h-4 w-4" />
-              <span className="font-medium">Nuevo</span>
+            <Button variant="default" className="w-full justify-between h-9 shadow-xs hover:shadow-md transition-shadow px-3">
+              <div className="flex items-center gap-2">
+                <Plus className="h-4 w-4" />
+                <span className="font-medium">Nuevo</span>
+              </div>
+              <span className="text-[10px] bg-background/20 rounded px-1.5 py-0.5 text-primary-foreground/70 font-mono tracking-widest">
+                ⌘K
+              </span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-[224px]">
+            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Crear</DropdownMenuLabel>
             <DropdownMenuItem className="gap-2 cursor-pointer">
               <CheckSquare className="h-4 w-4 text-muted-foreground" />
-              <span>Nueva tarea</span>
+              <span>Tarea</span>
             </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2 cursor-pointer">
-              <Bot className="h-4 w-4 text-violet-500" />
-              <span>Nueva tarea IA</span>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem className="gap-2 cursor-pointer">
               <BriefcaseBusiness className="h-4 w-4 text-muted-foreground" />
-              <span>Nuevo proyecto</span>
+              <span>Proyecto</span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2 cursor-pointer">
               <Folder className="h-4 w-4 text-muted-foreground" />
-              <span>Nueva carpeta</span>
+              <span>Carpeta</span>
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem className="gap-2 cursor-pointer">
               <Package className="h-4 w-4 text-muted-foreground" />
-              <span>Nuevo producto</span>
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2 cursor-pointer">
-              <Zap className="h-4 w-4 text-muted-foreground" />
-              <span>Nueva automatización</span>
+              <span>Producto</span>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2 cursor-pointer">
               <FileText className="h-4 w-4 text-muted-foreground" />
               <span>Documento</span>
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-violet-500 uppercase tracking-wider font-semibold">IA</DropdownMenuLabel>
+            <DropdownMenuItem className="gap-2 cursor-pointer">
+              <Bot className="h-4 w-4 text-violet-500" />
+              <span>Crear con IA</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2 cursor-pointer">
+              <Bot className="h-4 w-4 text-violet-500" />
+              <span>Analizar proyecto</span>
+            </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Importar</DropdownMenuLabel>
+            <DropdownMenuItem className="gap-2 cursor-pointer">
+              <Upload className="h-4 w-4 text-muted-foreground" />
+              <span>CSV</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2 cursor-pointer">
+              <FileSpreadsheet className="h-4 w-4 text-emerald-500" />
+              <span>Excel</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2 cursor-pointer">
+              <Package className="h-4 w-4 text-yellow-500" />
+              <span>Mercado Libre</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -77,7 +100,7 @@ export default function Sidebar() {
         <nav className="space-y-6">
           {navigationGroups.map((group) => (
             <div key={group.label}>
-              <h3 className="px-3 text-xs font-semibold text-muted-foreground/70 tracking-wider mb-2">
+              <h3 className="px-3 text-[11px] font-semibold text-muted-foreground/70 tracking-wider mb-2 uppercase">
                 {group.label}
               </h3>
               <div className="space-y-0.5">
@@ -111,15 +134,30 @@ export default function Sidebar() {
         </nav>
       </div>
 
-      {/* User profile footer */}
-      <div className="p-4 border-t border-border flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
+      {/* Bottom Footer Section */}
+      <div className="p-3 border-t border-border space-y-0.5 shrink-0">
+        <button className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-muted-foreground hover:bg-muted hover:text-foreground">
+          <Star className="mr-3 h-4 w-4 text-yellow-500" />
+          Favoritos
+        </button>
+        <button className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-muted-foreground hover:bg-muted hover:text-foreground mb-4">
+          <Clock className="mr-3 h-4 w-4" />
+          Recientes
+        </button>
+        
+        <div className="h-px bg-border my-2 -mx-3" />
+        
+        <button className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors text-muted-foreground hover:bg-muted hover:text-foreground">
+          <Settings className="mr-3 h-4 w-4" />
+          Configuración
+        </button>
+        
+        <div className="flex items-center space-x-3 px-3 py-2 mt-2 rounded-md hover:bg-muted transition-colors cursor-pointer">
+          <div className="h-7 w-7 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs">
             JK
           </div>
-          <div className="text-sm overflow-hidden">
+          <div className="text-sm overflow-hidden flex-1">
             <p className="font-medium text-foreground truncate">Johnatan K.</p>
-            <p className="text-xs text-muted-foreground truncate">Administrador</p>
           </div>
         </div>
       </div>
