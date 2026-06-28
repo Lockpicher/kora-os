@@ -4,11 +4,42 @@ import { workService } from '@/src/modules/work/services/work.service'
 import { CreateTaskCommand } from '@/src/modules/work/commands/CreateTaskCommand'
 import { MoveTaskCommand } from '@/src/modules/work/commands/MoveTaskCommand'
 
-export async function createTaskAction(cmd: CreateTaskCommand) {
+import { z } from 'zod'
+import { createClient } from '@/lib/supabase/server'
+import { TaskInsertSchema } from '@/src/modules/work/schema/task.schema'
+
+export async function createTaskAction(cmd: Record<string, unknown>) {
   try {
-    const task = await workService.createTask(cmd)
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    if (!user) {
+      throw new Error("Unauthorized")
+    }
+
+    const { data: orgMember } = await supabase.from("organization_members").select("organization_id").eq("user_id", user.id).single()
+    if (!orgMember?.organization_id) {
+      throw new Error("User has no organization")
+    }
+
+    const validatedData = TaskInsertSchema.parse({
+      ...cmd,
+      organization_id: orgMember.organization_id
+    })
+    
+    // Convert to CreateTaskCommand structure
+    const taskCommand: CreateTaskCommand = {
+      ...validatedData,
+      organization_id: validatedData.organization_id,
+      workflow_column_id: validatedData.workflow_column_id
+    }
+
+    const task = await workService.createTask(taskCommand)
     return { success: true, data: task }
   } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
+      return { success: false, error: error.errors[0].message }
+    }
     if (error instanceof Error) {
       return { success: false, error: error.message }
     }
