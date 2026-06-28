@@ -2,19 +2,8 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LayoutDashboard, Package, FolderTree, Bookmark, Sliders, Truck, ShoppingCart, Webhook } from "lucide-react"
+import { navigation } from "./navigation"
 import { cn } from "@/lib/utils"
-
-const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Productos", href: "/products", icon: Package },
-  { name: "Categorías", href: "/categories", icon: FolderTree },
-  { name: "Marcas", href: "/brands", icon: Bookmark },
-  { name: "Atributos", href: "/attributes", icon: Sliders },
-  { name: "Proveedores", href: "/suppliers", icon: Truck },
-  { name: "Compras", href: "/purchase-orders", icon: ShoppingCart },
-  { name: "Integraciones", href: "/integrations", icon: Webhook },
-]
 
 export default function Sidebar() {
   const pathname = usePathname()
