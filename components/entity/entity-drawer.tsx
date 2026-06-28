@@ -6,6 +6,7 @@ import { X, LayoutPanelLeft } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { EntityTaskContent } from "./entity-task-content"
 import { EntityTaskForm } from "./entity-task-form"
+import { EntityProjectForm } from "./entity-project-form"
 import { ActivityTimeline } from "./activity-timeline"
 
 const entityTabs: Record<string, string[]> = {
@@ -104,6 +105,8 @@ export function EntityDrawer() {
                <h2 className="text-xl font-semibold mb-6">Nuevo {entityType === "project" ? "Proyecto" : entityType === "task" ? "Tarea" : "Elemento"}</h2>
                {entityType === "task" ? (
                  <EntityTaskForm />
+               ) : entityType === "project" ? (
+                 <EntityProjectForm />
                ) : (
                  <div className="flex-1 border border-dashed border-border rounded-lg bg-muted/10 flex items-center justify-center text-sm text-muted-foreground">
                    Formulario de Creación de {entityType} en construcción...
