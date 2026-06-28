@@ -43,9 +43,9 @@ export async function createTaskAction(cmd: Record<string, unknown>) {
 
     const task = await workService.createTask(taskCommand)
     return { success: true, data: task }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("CREATE TASK ERROR:", error)
-    if (error?.errors) {
+    if (error instanceof z.ZodError) {
       return { success: false, error: error.errors[0].message }
     }
     if (error instanceof Error) {
